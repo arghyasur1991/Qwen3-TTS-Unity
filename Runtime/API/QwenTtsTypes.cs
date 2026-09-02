@@ -42,6 +42,16 @@ namespace QwenTTS
 
         /// <summary>Per-stage timing to the log.</summary>
         public bool LogTiming;
+
+        /// <summary>
+        /// ONNX Runtime intra-op threads. 0 leaves ORT's own choice alone.
+        ///
+        /// Autoregressive decode at batch 1 reads every weight once per token,
+        /// so both talker and code predictor are bound by how fast weights can
+        /// be streamed rather than by arithmetic. Thread count is therefore a
+        /// bandwidth knob, and past a point more threads stop helping.
+        /// </summary>
+        public int IntraOpThreads;
     }
 
     /// <summary>Per-utterance generation controls. All optional.</summary>
@@ -66,6 +76,22 @@ namespace QwenTTS
         public int SubTalkerTopK = 50;
         public float SubTalkerTopP = 1f;
 
+        /// <summary>
+        /// Frames in the first streamed chunk. Small means audio starts sooner.
+        /// Only used by the streaming overload.
+        /// </summary>
+        public int FirstChunkFrames = 6;
+
+        /// <summary>
+        /// Ceiling on streamed chunk size. Chunks double from
+        /// <see cref="FirstChunkFrames"/> up to this, because the codec has to
+        /// re-decode the whole prefix for every chunk: fixed small chunks would
+        /// make that cost grow with the square of utterance length, while
+        /// doubling keeps the total near twice a single decode and still gets
+        /// the first audio out early.
+        /// </summary>
+        public int MaxChunkFrames = 48;
+
         public static SpeechOptions Default() => new SpeechOptions();
 
         internal SpeechOptions Validated()
@@ -80,11 +106,53 @@ namespace QwenTTS
                 throw new ArgumentOutOfRangeException(nameof(SampleRate), "Use 0 for the native rate.");
             if (string.IsNullOrWhiteSpace(Language))
                 throw new ArgumentException("Language is required; use QwenLanguages.Auto to let the model decide.");
+            if (FirstChunkFrames <= 0)
+                throw new ArgumentOutOfRangeException(nameof(FirstChunkFrames), "Must be positive.");
+            if (MaxChunkFrames < FirstChunkFrames)
+                throw new ArgumentOutOfRangeException(nameof(MaxChunkFrames),
+                    "Must be at least FirstChunkFrames.");
             return this;
         }
     }
 
     /// <summary>Generated audio, as PCM plus its rate.</summary>
+    /// <summary>
+    /// A run of newly finished audio, handed over while the rest is still
+    /// being generated.
+    ///
+    /// <see cref="Pcm"/> holds only samples not previously reported, so
+    /// appending every chunk in order reconstructs the utterance exactly.
+    /// Nothing is spliced or crossfaded: the codec decoder is re-run over the
+    /// whole prefix each time and its output for already-emitted samples is
+    /// stable, so a chunk boundary is not a discontinuity.
+    /// </summary>
+    public readonly struct SpeechChunk
+    {
+        public readonly float[] Pcm;
+        public readonly int SampleRate;
+
+        /// <summary>Index of the first 12.5 Hz frame this chunk covers.</summary>
+        public readonly int FrameStart;
+
+        public readonly int FrameCount;
+
+        /// <summary>True for the chunk that completes the utterance.</summary>
+        public readonly bool IsFinal;
+
+        public SpeechChunk(float[] pcm, int sampleRate, int frameStart, int frameCount, bool isFinal)
+        {
+            Pcm = pcm;
+            SampleRate = sampleRate;
+            FrameStart = frameStart;
+            FrameCount = frameCount;
+            IsFinal = isFinal;
+        }
+
+        public float Duration => Pcm == null || Pcm.Length == 0
+            ? 0f
+            : (float)Pcm.Length / SampleRate;
+    }
+
     public readonly struct SpeechResult
     {
         public readonly float[] Pcm;

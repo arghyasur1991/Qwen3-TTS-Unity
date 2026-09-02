@@ -78,6 +78,8 @@ namespace QwenTTS.Engine
                 NamedOnnxValue.CreateFromTensor(inputName, new DenseTensor<long>(flat, shape))
             };
 
+            using var _prof = QwenTTS.Internal.GenerationProfiler.Measure(
+                QwenTTS.Internal.GenerationProfiler.Vocoder);
             using var results = Run(feeds);
             var wav = CopyFloat(results[0]);
             // Flat buffer is the waveform. Do not use Dimensions[1] — CustomVoice

@@ -25,7 +25,7 @@ Measured on an Apple-silicon Mac, CPU execution provider, FP32:
 | Disk | ~8 GB |
 | Resident when loaded | ~7.0 GB (5.4 GB of ONNX sessions + ~1.5 GB embedding tables) |
 | Cold session open | ~11 s (~3 s with a warm page cache) |
-| Generation speed | ~4x slower than real time |
+| Generation speed | ~0.9x of real time (finishes just ahead of playback) |
 
 ONNX Runtime does **not** keep the external `.onnx.data` lazily mapped — resident
 memory tracks file size roughly 1:1. Budget accordingly:
@@ -110,6 +110,37 @@ Reference audio quality decides clone quality:
   reference is lower.
 - **Pass the exact transcript.** Without it you get a stable voice that is not
   the one in your recording.
+
+## Streaming
+
+Generation runs a little faster than playback, so audio can start long before
+the line is finished.
+
+```csharp
+var player = new Progress<SpeechChunk>(chunk =>
+{
+    // Reported from a worker thread. Marshal before touching an AudioClip.
+    // chunk.Pcm holds only samples not reported before, so appending each
+    // chunk in order reproduces the utterance.
+    Enqueue(chunk.Pcm, chunk.SampleRate);
+});
+
+// Still returns the whole thing, for callers that also want to cache it.
+var whole = await voice.SpeakStreamAsync("Careful with that.", player);
+```
+
+First audio arrives in roughly a second instead of at the end. Tune with
+`SpeechOptions.FirstChunkFrames` (default 6, about half a second) and
+`MaxChunkFrames` (48).
+
+The chunks are not decoded independently. This codec decoder's output depends
+on its whole input rather than a bounded window — giving a chunk 24 frames of
+preceding context still leaves errors of 0.59 on a signal in [-1, 1] — so
+overlap-and-trim does not apply. Instead the prefix is re-decoded each time
+and only new samples are handed over, which is exact rather than approximate:
+concatenated chunks match a single decode to about 1.9e-6. The price is
+re-decoding, so chunk sizes double rather than staying small, keeping total
+decode work near twice a single pass.
 
 ## Saving and reloading
 

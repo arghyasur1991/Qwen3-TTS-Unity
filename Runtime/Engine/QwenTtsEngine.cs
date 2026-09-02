@@ -177,6 +177,7 @@ namespace QwenTTS.Engine
         /// </summary>
         public float[] SynthesizeDesigned(string text, string instruct, string language,
             SamplingParams sampling, IProgress<SpeechProgress> progress = null,
+            StreamRequest stream = default,
             CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
@@ -193,8 +194,13 @@ namespace QwenTTS.Engine
                     $"[QwenTtsEngine] VoiceDesign tokens assistant={assistantIds.Length} " +
                     $"instruct={instructIds.Length}");
 
-                var codes = _voiceDesign.Talker.GenerateVoiceDesign(
-                    assistantIds, instructIds, language, sampling, progress, cancellationToken);
+                long[,,] codes;
+                using (stream.Begin(_voiceDesign.Talker, _voiceDesign.Vocoder,
+                    prefixCodes: null, cancellationToken))
+                {
+                    codes = _voiceDesign.Talker.GenerateVoiceDesign(
+                        assistantIds, instructIds, language, sampling, progress, cancellationToken);
+                }
                 var pcm = _voiceDesign.Vocoder.Decode(codes, cancellationToken);
                 QwenLog.Log($"[QwenTtsEngine] VoiceDesign codes T={codes.GetLength(2)} wav={pcm.Length} @24k");
                 return pcm;
@@ -239,6 +245,7 @@ namespace QwenTTS.Engine
 
         public float[] SynthesizeCloned(string text, ClonePrompt prompt, string refText, string language,
             SamplingParams sampling, IProgress<SpeechProgress> progress = null,
+            StreamRequest stream = default,
             CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
@@ -257,20 +264,26 @@ namespace QwenTTS.Engine
 
                 bool icl = prompt.HasIclCodes && !string.IsNullOrEmpty(refText);
                 long[,,] codes;
-                if (icl)
+                // Streaming the ICL path has to carry the reference frames into
+                // every decode, for the same reason the finished utterance does.
+                using (stream.Begin(_clone.Talker, _clone.Vocoder,
+                    icl ? prompt.ReferenceCodes : null, cancellationToken))
                 {
-                    var refTokenIds = _clone.Tokenizer.BuildIclRefTextTokens(refText);
-                    codes = _clone.Talker.GenerateWithSpeakerEmbeddingAndRefText(
-                        tokenIds, prompt.SpeakerEmbedding, language, refTokenIds, prompt.ReferenceCodes,
-                        sampling, progress, cancellationToken);
-                    QwenLog.Log($"[QwenTtsEngine] Base ICL clone codes T={codes.GetLength(2)} " +
-                                $"refT={prompt.ReferenceFrames}");
-                }
-                else
-                {
-                    codes = _clone.Talker.GenerateWithSpeakerEmbedding(
-                        tokenIds, prompt.SpeakerEmbedding, language, sampling, progress, cancellationToken);
-                    QwenLog.Log($"[QwenTtsEngine] Base x-vector clone codes T={codes.GetLength(2)}");
+                    if (icl)
+                    {
+                        var refTokenIds = _clone.Tokenizer.BuildIclRefTextTokens(refText);
+                        codes = _clone.Talker.GenerateWithSpeakerEmbeddingAndRefText(
+                            tokenIds, prompt.SpeakerEmbedding, language, refTokenIds, prompt.ReferenceCodes,
+                            sampling, progress, cancellationToken);
+                        QwenLog.Log($"[QwenTtsEngine] Base ICL clone codes T={codes.GetLength(2)} " +
+                                    $"refT={prompt.ReferenceFrames}");
+                    }
+                    else
+                    {
+                        codes = _clone.Talker.GenerateWithSpeakerEmbedding(
+                            tokenIds, prompt.SpeakerEmbedding, language, sampling, progress, cancellationToken);
+                        QwenLog.Log($"[QwenTtsEngine] Base x-vector clone codes T={codes.GetLength(2)}");
+                    }
                 }
 
                 if (!icl)

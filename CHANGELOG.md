@@ -10,6 +10,27 @@ Spark-TTS engine that shared that repo is not carried over.
 
 - Qwen3-TTS 12 Hz **VoiceDesign** and **Base** checkpoints, addressed
   independently.
+- **Streaming output.** `QwenVoice.SpeakStreamAsync` reports
+  `SpeechChunk`es as audio is finished and still returns the whole
+  `SpeechResult`. First audio at 928 ms against 8799 ms for the utterance on
+  the test sentence. The codec decoder has no bounded receptive field, so
+  chunks are not decoded as slices — the prefix is re-decoded and only new
+  samples are handed over, which makes the concatenation match a single
+  decode to 1.86e-6 rather than approximately. Opt-in; `SpeakAsync` is
+  unchanged.
+- **2.13x faster generation**, now slightly ahead of realtime. Profiling
+  found half the wall clock outside the ONNX models entirely: the
+  codec-embedding projections, sixteen 1024x2048 matrix-vector products per
+  output frame, running as scalar C#. Row-parallel with independent
+  accumulators they are 14x faster (and the prefill text MLP 23x). The KV
+  cache copy that looked like the obvious O(T^2) culprit measured 0.8% and
+  was left alone.
+- **`QwenTts.ProfilingEnabled` / `ProfileReport()`** for per-stage wall clock,
+  off by default.
+- **`QwenTtsSettings.IntraOpThreads`** to override ONNX Runtime's thread
+  count. Left at 0 (ORT's choice) by default: forcing 12 on a 16-core M4 Max
+  was 33% slower, because decode is bound by streaming weights from memory
+  rather than by arithmetic.
 - **One talker graph instead of two.** `talker_prefill` and `talker_decode`
   were the same 1.7B weights exported under two signatures, and both had to be
   resident for one utterance. A zero-length KV cache makes the decode graph a

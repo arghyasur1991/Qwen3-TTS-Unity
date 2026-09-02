@@ -19,6 +19,37 @@ namespace QwenTTS
     /// </summary>
     public sealed class QwenVoice
     {
+        /// <summary>
+        /// Applies the caller's output rate to each chunk, so streamed audio
+        /// and the final <see cref="SpeechResult"/> agree. Resampling per chunk
+        /// rather than once at the end introduces a boundary the whole-buffer
+        /// path does not have; at 24 kHz to 48 kHz or 44.1 kHz it is far below
+        /// audibility, and requesting the native rate avoids it entirely.
+        /// </summary>
+        sealed class ChunkRelay : IProgress<SpeechChunk>
+        {
+            readonly IProgress<SpeechChunk> _inner;
+            readonly int _rate;
+
+            public ChunkRelay(IProgress<SpeechChunk> inner, int rate)
+            {
+                _inner = inner;
+                _rate = rate <= 0 ? QwenTts.NativeSampleRate : rate;
+            }
+
+            public void Report(SpeechChunk value)
+            {
+                if (_rate == QwenTts.NativeSampleRate)
+                {
+                    _inner.Report(value);
+                    return;
+                }
+                var pcm = AudioResample.Resample(value.Pcm, QwenTts.NativeSampleRate, _rate);
+                _inner.Report(new SpeechChunk(
+                    pcm, _rate, value.FrameStart, value.FrameCount, value.IsFinal));
+            }
+        }
+
         readonly QwenTtsEngine _engine;
         readonly ClonePrompt _prompt;
         readonly float[] _referenceSamples24k;
@@ -72,8 +103,39 @@ namespace QwenTTS
         /// </summary>
         /// <param name="options">Language, sampling and output rate. Null uses defaults.</param>
         /// <param name="progress">Reports 12 Hz frames as they are generated.</param>
-        public async Task<SpeechResult> SpeakAsync(string text, SpeechOptions options = null,
+        public Task<SpeechResult> SpeakAsync(string text, SpeechOptions options = null,
             IProgress<SpeechProgress> progress = null, CancellationToken cancellationToken = default)
+            => SpeakInternalAsync(text, options, null, progress, cancellationToken);
+
+        /// <summary>
+        /// Renders <paramref name="text"/> and hands over audio in pieces as it
+        /// becomes available, instead of only at the end.
+        ///
+        /// Each <see cref="SpeechChunk"/> carries only samples not reported
+        /// before, so appending them in order reproduces the utterance; the
+        /// returned <see cref="SpeechResult"/> is still the whole thing, for
+        /// callers that also want to cache or save it. Chunks are reported from
+        /// the worker thread, so marshal to the main thread before touching an
+        /// AudioClip.
+        ///
+        /// Worth using because generation runs slightly faster than playback:
+        /// the first chunk arrives in a fraction of a second and the rest keeps
+        /// ahead of a listener, turning a multi-second wait into near-immediate
+        /// speech. It costs some total throughput — see
+        /// <see cref="SpeechOptions.MaxChunkFrames"/>.
+        /// </summary>
+        public Task<SpeechResult> SpeakStreamAsync(string text, IProgress<SpeechChunk> chunks,
+            SpeechOptions options = null, IProgress<SpeechProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (chunks == null)
+                throw new ArgumentNullException(nameof(chunks));
+            return SpeakInternalAsync(text, options, chunks, progress, cancellationToken);
+        }
+
+        async Task<SpeechResult> SpeakInternalAsync(string text, SpeechOptions options,
+            IProgress<SpeechChunk> chunkSink, IProgress<SpeechProgress> progress,
+            CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(text))
                 throw new ArgumentException("Text is empty.", nameof(text));
@@ -88,10 +150,20 @@ namespace QwenTTS
             string referenceText = ReferenceText;
             bool cloned = IsCloned;
 
+            var stream = chunkSink == null
+                ? default
+                : new Engine.StreamRequest(
+                    new ChunkRelay(chunkSink, options.SampleRate),
+                    options.FirstChunkFrames, options.MaxChunkFrames);
+
             float[] pcm24 = await BackgroundWork.Run(() => cloned
-                ? engine.SynthesizeCloned(text, prompt, referenceText, language, sampling, progress, cancellationToken)
-                : engine.SynthesizeDesigned(text, instruct, language, sampling, progress, cancellationToken))
+                ? engine.SynthesizeCloned(text, prompt, referenceText, language, sampling,
+                    progress, stream, cancellationToken)
+                : engine.SynthesizeDesigned(text, instruct, language, sampling,
+                    progress, stream, cancellationToken))
                 .ConfigureAwait(false);
+
+            Internal.GenerationProfiler.StopWall();
 
             if (pcm24 == null || pcm24.Length == 0)
                 throw new InvalidOperationException("Generation produced no audio.");

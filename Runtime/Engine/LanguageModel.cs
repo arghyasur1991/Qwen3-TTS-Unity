@@ -5,6 +5,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
+using QwenTTS.Internal;
 using System.Linq;
 using System.Threading;
 using Microsoft.ML.OnnxRuntime;
@@ -148,6 +149,24 @@ internal sealed class LanguageModel : IDisposable
             instructTokenIds: instructTokenIds, voiceDesign: true);
     }
 
+    /// <summary>
+    /// Invoked once per completed frame with every frame produced so far, so a
+    /// caller can decode and hand over audio before the utterance finishes.
+    ///
+    /// Not a per-call parameter because generation is already serialised by the
+    /// engine's per-checkpoint lock; the engine sets this for the duration of
+    /// one generate call and clears it in a finally. The list is the live
+    /// accumulator — read it, do not retain it.
+    /// </summary>
+    internal Action<List<long[]>> FrameSink;
+
+    /// <summary>
+    /// The frame accumulator from the most recent generate call, kept so a
+    /// streaming caller can flush frames produced after the last chunk
+    /// boundary. Guarded by the same engine lock as <see cref="FrameSink"/>.
+    /// </summary>
+    internal List<long[]> LastFrames;
+
     private long[,,] GenerateInternal(int[] tokenIds, int speakerId, string language,
                              float[] speakerEmbedding,
                              SamplingParams sampling,
@@ -162,11 +181,16 @@ internal sealed class LanguageModel : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         var cfg = _embeddings.Config;
         
-        var (inputsEmbeds, trailingTextHidden) = voiceDesign
-            ? BuildVoiceDesignPrefill(tokenIds, instructTokenIds, language, cfg)
-            : BuildPrefillEmbedding(
-                tokenIds, speakerId, language, cfg, speakerEmbedding,
-                refTokenIds, refAudioCodes, iclNonStreaming);
+        float[,,] inputsEmbeds;
+        float[,] trailingTextHidden;
+        using (GenerationProfiler.Measure(GenerationProfiler.PrefillBuild))
+        {
+            (inputsEmbeds, trailingTextHidden) = voiceDesign
+                ? BuildVoiceDesignPrefill(tokenIds, instructTokenIds, language, cfg)
+                : BuildPrefillEmbedding(
+                    tokenIds, speakerId, language, cfg, speakerEmbedding,
+                    refTokenIds, refAudioCodes, iclNonStreaming);
+        }
         int prefillLen = inputsEmbeds.GetLength(1);
         LogPrefillFingerprint(inputsEmbeds, trailingTextHidden, prefillLen);
 
@@ -207,6 +231,7 @@ internal sealed class LanguageModel : IDisposable
             using var posOrt = OrtValue.CreateTensorValueFromMemory(OrtMemoryInfo.DefaultInstance, new Memory<long>(flatPosIds, 0, 3 * 1 * prefillLen), new long[] { 3, 1, prefillLen });
 
             cancellationToken.ThrowIfCancellationRequested();
+            using var _prefillRun = GenerationProfiler.Measure(GenerationProfiler.PrefillRun);
             if (_unifiedTalker)
             {
                 // A prefill is the same graph with nothing in the cache. The
@@ -324,10 +349,12 @@ internal sealed class LanguageModel : IDisposable
                 }
 
                 // Sample group 0
+                long _t0 = Stopwatch.GetTimestamp();
                 var group0Token = _sampler.Sample(
                     logits, cfg.talker.vocab_size, sampling.Temperature,
                     sampling.TopK, sampling.TopP,
                     generatedTokens, sampling.RepetitionPenalty, _suppressTokens);
+                GenerationProfiler.Add(GenerationProfiler.SampleGroup0, Stopwatch.GetTimestamp() - _t0);
                 if (group0Token == cfg.talker.codec_eos_token_id)
                     break;
 
@@ -340,6 +367,7 @@ internal sealed class LanguageModel : IDisposable
                 _embeddings.TalkerCodecEmbedding(group0Token, group0EmbedBuf);
 
                 // CP prefill: concat(hidden_states[:,-1,:], group0_embed)
+                long _tEmb = Stopwatch.GetTimestamp();
                 if (_embeddings.HasCpProjection)
                 {
                     Debug.Assert(cpInputDim <= pooledCpInputs.Length / 2, "cpInputDim exceeds half buffer");
@@ -360,6 +388,7 @@ internal sealed class LanguageModel : IDisposable
                     int hOffset = hiddenStates.Length - _hiddenSize;
                     BuildCpPrefillDirect(pooledCpInputs, hiddenStates.AsSpan(), hOffset, group0EmbedBuf, cpInputDim);
                 }
+                GenerationProfiler.Add(GenerationProfiler.CpEmbed, Stopwatch.GetTimestamp() - _tEmb);
 
                 int cpPastLen = 0;
                 var cpSession = GetCpSession();
@@ -389,19 +418,24 @@ internal sealed class LanguageModel : IDisposable
 
                     cancellationToken.ThrowIfCancellationRequested();
                     int cpToken;
+                    long _tCp = Stopwatch.GetTimestamp();
                     using (var cpOutputs = cpSession.Run(new RunOptions(), cpInputNames,
                         new[] { cpEmbedsOrt, cpStepOrt, cpKeysOrt, cpValuesOrt }, cpOutNames))
                     {
+                        GenerationProfiler.Add(GenerationProfiler.CpRun, Stopwatch.GetTimestamp() - _tCp);
                         var cpLogitsSpan = cpOutputs[cpOutLogits].GetTensorDataAsSpan<float>();
                         cpLogitsScratch = Grow(cpLogitsScratch, cpLogitsSpan.Length);
                         cpLogitsSpan.CopyTo(cpLogitsScratch);
+                        long _tCpS = Stopwatch.GetTimestamp();
                         cpToken = _sampler.Sample(
                             cpLogitsScratch, cfg.code_predictor.vocab_size,
                             sampling.SubTemperature, sampling.SubTopK, sampling.SubTopP,
                             null, 1f, null, cpLogitsSpan.Length);
+                        GenerationProfiler.Add(GenerationProfiler.CpSample, Stopwatch.GetTimestamp() - _tCpS);
 
                         // Staged, because the past_* OrtValues above still alias
                         // cpPastKeys/cpPastValues until this Run is disposed.
+                        long _tCpKv = Stopwatch.GetTimestamp();
                         var kSpan = cpOutputs[cpOutKeys].GetTensorDataAsSpan<float>();
                         var vSpan = cpOutputs[cpOutValues].GetTensorDataAsSpan<float>();
                         cpKeysScratch = Grow(cpKeysScratch, kSpan.Length);
@@ -410,12 +444,15 @@ internal sealed class LanguageModel : IDisposable
                         vSpan.CopyTo(cpValuesScratch);
                         cpPastLen += cpInputSeqLen;
                         cpKvLen = cpKvStride * cpPastLen;
+                        GenerationProfiler.Add(GenerationProfiler.CpKvCopy, Stopwatch.GetTimestamp() - _tCpKv);
                     }
 
+                    long _tCpKv2 = Stopwatch.GetTimestamp();
                     cpPastKeys = Grow(cpPastKeys, cpKvLen);
                     cpPastValues = Grow(cpPastValues, cpKvLen);
                     Array.Copy(cpKeysScratch, cpPastKeys, cpKvLen);
                     Array.Copy(cpValuesScratch, cpPastValues, cpKvLen);
+                    GenerationProfiler.Add(GenerationProfiler.CpKvCopy, Stopwatch.GetTimestamp() - _tCpKv2);
 
                     codes[groupIdx] = cpToken;
 
@@ -423,6 +460,7 @@ internal sealed class LanguageModel : IDisposable
                     if (groupIdx < 15)
                     {
                         Debug.Assert(cpInputDim <= pooledCpInputs.Length, "cpInputDim exceeds pooled buffer for next input");
+                        long _tEmb2 = Stopwatch.GetTimestamp();
                         if (_embeddings.HasCpProjection)
                         {
                             _embeddings.ProjectedCpCodecEmbedding(groupIdx - 1, cpToken, new Span<float>(pooledCpInputs, 0, cpInputDim));
@@ -434,13 +472,16 @@ internal sealed class LanguageModel : IDisposable
                             for (int i = 0; i < cpInputDim; i++)
                                 pooledCpInputs[i] = i < _cpHiddenSize ? cpEmbedBuf[i] : 0f;
                         }
+                        GenerationProfiler.Add(GenerationProfiler.CpEmbed, Stopwatch.GetTimestamp() - _tEmb2);
                     }
                 }
 
                 generatedCodes.Add(codes);
                 progress?.Report(new SpeechProgress(generatedCodes.Count, sampling.MaxNewTokens));
+                FrameSink?.Invoke(generatedCodes);
 
                 // Build next Talker input: sum all group embeddings + trailing text
+                long _tNext = Stopwatch.GetTimestamp();
                 _embeddings.TalkerCodecEmbedding((int)codes[0], nextInputBuf);
                 for (int g = 1; g < 16; g++)
                 {
@@ -467,6 +508,8 @@ internal sealed class LanguageModel : IDisposable
                 for (int ax = 0; ax < 3; ax++)
                     decodePosBuf[ax] = prefillLen + step;
 
+                GenerationProfiler.Add(GenerationProfiler.NextInput, Stopwatch.GetTimestamp() - _tNext);
+
                 int pastLen = prefillLen + step;
                 int kvLen = kvStride * pastLen;
 
@@ -488,12 +531,17 @@ internal sealed class LanguageModel : IDisposable
 
                 cancellationToken.ThrowIfCancellationRequested();
                 int nextKvLen;
+                long _tDec = Stopwatch.GetTimestamp();
                 using (var decodeOutputs = decodeSession.Run(new RunOptions(), decodeInputNames,
                     new[] { embedsOrtStep, maskOrtStep, posOrtStep, keysOrtStep, valuesOrtStep },
                     decodeOutNames))
                 {
+                    GenerationProfiler.Add(GenerationProfiler.TalkerRun, Stopwatch.GetTimestamp() - _tDec);
+                    long _tOut = Stopwatch.GetTimestamp();
                     logits = decodeOutputs[outLogits].GetTensorDataAsSpan<float>().ToArray();
                     hiddenStates = decodeOutputs[outHidden].GetTensorDataAsSpan<float>().ToArray();
+                    GenerationProfiler.Add(GenerationProfiler.TalkerOutCopy, Stopwatch.GetTimestamp() - _tOut);
+                    long _tKv = Stopwatch.GetTimestamp();
 
                     // past_keys/past_values are still bound to the input buffers
                     // for the lifetime of this Run, so the new KV is staged
@@ -505,12 +553,15 @@ internal sealed class LanguageModel : IDisposable
                     kvValuesScratch = Grow(kvValuesScratch, vSpan.Length);
                     kSpan.CopyTo(kvKeysScratch);
                     vSpan.CopyTo(kvValuesScratch);
+                    GenerationProfiler.Add(GenerationProfiler.TalkerKvCopy, Stopwatch.GetTimestamp() - _tKv);
                 }
 
+                long _tKv2 = Stopwatch.GetTimestamp();
                 pastKeys = Grow(pastKeys, nextKvLen);
                 pastValues = Grow(pastValues, nextKvLen);
                 Array.Copy(kvKeysScratch, pastKeys, nextKvLen);
                 Array.Copy(kvValuesScratch, pastValues, nextKvLen);
+                GenerationProfiler.Add(GenerationProfiler.TalkerKvCopy, Stopwatch.GetTimestamp() - _tKv2);
             }
         }
         finally
@@ -521,6 +572,8 @@ internal sealed class LanguageModel : IDisposable
 
         // Convert to (1, 16, T)
         int T = generatedCodes.Count;
+        LastFrames = generatedCodes;
+        GenerationProfiler.SetFrames(T);
         var result = new long[1, 16, T];
         for (int t = 0; t < T; t++)
             for (int g = 0; g < 16; g++)

@@ -136,16 +136,7 @@ namespace QwenTTS.Engine
         {
             float* inRow = (float*)src + (long)t * srcDim;
             float* outRow = (float*)dst + (long)t * projOutDim;
-            float* w = (float*)weight;
-            float* b = (float*)bias;
-            for (int i = 0; i < wRows; i++)
-            {
-                float sum = 0;
-                float* wrow = w + (long)i * wCols;
-                for (int j = 0; j < wCols; j++)
-                    sum += wrow[j] * inRow[j];
-                outRow[i] = sum + b[i];
-            }
+            MatVec((float*)weight, wRows, wCols, inRow, outRow, (float*)bias);
         }
 
         public void TextEmbedding(int tokenId, Span<float> output)
@@ -275,14 +266,73 @@ namespace QwenTTS.Engine
 
         static unsafe void MatMul(float* weight, int M, int N, ReadOnlySpan<float> input, Span<float> output)
         {
-            for (int i = 0; i < M; i++)
+            fixed (float* inPtr = input)
+            fixed (float* outPtr = output)
+                MatVec(weight, M, N, inPtr, outPtr, null);
+        }
+
+        // Below this many rows a Parallel.For fork costs more than it saves.
+        const int ParallelRowFloor = 64;
+
+        /// <summary>
+        /// output[i] = dot(weight[i], input), plus bias[i] when bias is given.
+        ///
+        /// The hottest arithmetic in the package: sixteen of these run per
+        /// output frame (fifteen codec-embedding projections and the text MLP),
+        /// and as a plain scalar loop they measured 7.25 s of a 14.6 s
+        /// utterance — half the wall clock, more than the talker and
+        /// code-predictor ONNX runs put together.
+        ///
+        /// Unity's Mono reports Vector.IsHardwareAccelerated false, so
+        /// System.Numerics vectors would take a software path and lose to
+        /// scalar code. What does help is four independent accumulators (float
+        /// addition is not reassociable, so a single accumulator serialises on
+        /// FP-add latency rather than issue throughput) and splitting rows over
+        /// cores, each output element being an independent dot product with
+        /// nothing shared between them.
+        /// </summary>
+        static unsafe void MatVec(float* weight, int M, int N, float* input, float* output, float* bias)
+        {
+            if (M < ParallelRowFloor)
             {
-                float sum = 0;
-                float* row = weight + (long)i * N;
-                for (int j = 0; j < N; j++)
-                    sum += row[j] * input[j];
-                output[i] = sum;
+                for (int i = 0; i < M; i++)
+                    output[i] = DotRow(weight + (long)i * N, input, N) + (bias == null ? 0f : bias[i]);
+                return;
             }
+
+            // A lambda cannot close over a pointer, but it can close over the
+            // address as an IntPtr.
+            var w = (IntPtr)weight;
+            var inp = (IntPtr)input;
+            var outp = (IntPtr)output;
+            var bia = (IntPtr)bias;
+            int cols = N;
+
+            Parallel.For(0, M, i =>
+            {
+                float* bp = (float*)bia;
+                ((float*)outp)[i] =
+                    DotRow((float*)w + (long)i * cols, (float*)inp, cols)
+                    + (bp == null ? 0f : bp[i]);
+            });
+        }
+
+        static unsafe float DotRow(float* row, float* input, int n)
+        {
+            float s0 = 0f, s1 = 0f, s2 = 0f, s3 = 0f;
+            int j = 0;
+            int limit = n - 3;
+            for (; j < limit; j += 4)
+            {
+                s0 += row[j] * input[j];
+                s1 += row[j + 1] * input[j + 1];
+                s2 += row[j + 2] * input[j + 2];
+                s3 += row[j + 3] * input[j + 3];
+            }
+            float sum = (s0 + s1) + (s2 + s3);
+            for (; j < n; j++)
+                sum += row[j] * input[j];
+            return sum;
         }
     }
 

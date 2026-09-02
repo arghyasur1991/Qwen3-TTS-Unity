@@ -56,7 +56,8 @@ namespace QwenTTS
             {
                 bool rebind = IsInitialized &&
                               (_settings.ExecutionProvider != settings.ExecutionProvider ||
-                               _settings.ModelRoot != settings.ModelRoot);
+                               _settings.ModelRoot != settings.ModelRoot ||
+                               _settings.IntraOpThreads != settings.IntraOpThreads);
                 if (rebind)
                     UnloadInternal();
 
@@ -67,6 +68,7 @@ namespace QwenTTS
                 // policy at construction, so it must be set before any
                 // session wrapper exists.
                 Onnx.ORTModel.SetMemoryUsage(settings.MemoryUsage);
+                Onnx.ORTModel.IntraOpThreads = settings.IntraOpThreads;
                 Onnx.ORTModel.InitializeEnvironment(settings.LogLevel);
                 IsInitialized = true;
 
@@ -114,6 +116,31 @@ namespace QwenTTS
         /// were created from it keep working — the next call reloads it — so
         /// this is safe to do between phases of a session.
         /// </summary>
+        /// <summary>
+        /// Accumulate per-stage timings for the synthesis path. Off by default;
+        /// the counters are process-wide, so treat it as a diagnostic rather
+        /// than something to leave on in a shipped build.
+        /// </summary>
+        public static bool ProfilingEnabled
+        {
+            get => Internal.GenerationProfiler.Enabled;
+            set
+            {
+                Internal.GenerationProfiler.Enabled = value;
+                if (value) Internal.GenerationProfiler.Reset();
+            }
+        }
+
+        /// <summary>Zero the profiler's counters.</summary>
+        public static void ResetProfile() => Internal.GenerationProfiler.Reset();
+
+        /// <summary>
+        /// Table of where the last measured synthesis spent its time, with a
+        /// realtime factor. Empty-ish unless <see cref="ProfilingEnabled"/>
+        /// was on for the run.
+        /// </summary>
+        public static string ProfileReport() => Internal.GenerationProfiler.Report();
+
         public static void Evict(QwenCheckpoint checkpoint) => _engine?.Evict(checkpoint);
 
         /// <summary>Releases both checkpoints but stays initialized.</summary>

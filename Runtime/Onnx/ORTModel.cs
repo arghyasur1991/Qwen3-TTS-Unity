@@ -231,6 +231,12 @@ namespace QwenTTS.Onnx
         /// Creates optimized SessionOptions for ONNX Runtime.
         /// </summary>
         /// <returns>A configured SessionOptions object</returns>
+        /// <summary>
+        /// Intra-op thread count applied to every session. 0 keeps ORT's
+        /// default. Set from <see cref="QwenTtsSettings.IntraOpThreads"/>.
+        /// </summary>
+        internal static int IntraOpThreads;
+
         protected static SessionOptions CreateSessionOptions()
         {
             var options = new SessionOptions
@@ -238,7 +244,10 @@ namespace QwenTTS.Onnx
                 LogSeverityLevel = _ortLogLevel,
                 GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
             };
-            
+
+            if (IntraOpThreads > 0)
+                options.IntraOpNumThreads = IntraOpThreads;
+
             return options;
         }
 
