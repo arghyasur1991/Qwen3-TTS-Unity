@@ -1,29 +1,69 @@
 # Changelog
 
-All notable changes to this package will be documented in this file.
+## 0.1.0
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+First release as a standalone package. The ONNX inference path started life in
+Spark-TTS-Unity's `qwen3-tts` branch; history is preserved here, and the
+Spark-TTS engine that shared that repo is not carried over.
 
-## [Unreleased] — `qwen3-tts`
+### Engine
 
-### Changed
-- Style TTS now runs Qwen3-TTS 1.7B CustomVoice ONNX (ElBruno.QwenTTS port). `CharacterVoiceFactory` / `CharacterVoice` signatures are unchanged.
-- `GenerateSpeechAsync` still defaults to 16 kHz; native vocoder output is 24 kHz and is resampled.
-- `CreateFromReference` clones via Qwen3-TTS 1.7B **Base** ONNX. With `refText`, this is official ICL (`tokenizer_encoder` + speaker embedding). Without `refText`, x-vector-only. CustomVoice still cannot clone.
+- Qwen3-TTS 12 Hz **VoiceDesign** and **Base** checkpoints, addressed
+  independently.
+- Base cloning follows Qwen's reference implementation: the in-context prompt
+  sums the text and codec streams position-aligned (the layout
+  `generate_voice_clone` actually defaults to), the reference codes are decoded
+  together with the generated ones and the reference portion trimmed off, and
+  the speaker encoder's mel filterbank uses librosa's Slaney defaults.
+- Band-limited resampling. Linear interpolation folded 8-12 kHz back into the
+  speech band when downsampling and left a stair-stepped spectrum going up,
+  both of which move a reference away from the take being cloned.
+- WAV reading honours the header. The previous code assumed 16-bit mono at
+  16 kHz, so a 24 kHz reference would have been read 1.5x slow.
 
-### Added
-- Local 1.7B CustomVoice layout under `StreamingAssets/SparkTTS/Qwen3-1.7B/` (`QwenModelPaths`). No HuggingFace download.
-- Local 1.7B Base layout under `StreamingAssets/SparkTTS/Qwen3-1.7B-Base/` (`QwenModelPaths`) from [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL). C# mel + speaker encoder; no Windows DLL.
-- Model Deployment Tool categories for CustomVoice and Base.
-- Qwen ONNX graphs load through Spark `ORTModel` (`QwenOnnxModel`). Shared `QwenTokenSampler` / `QwenVocoderModel` / one `QwenTtsEngine`. Decode uses Spark LLM-style buffer reuse; sessions defer-load. Session construct and embedding load use `TaskScheduler.Default` with ExecutionContext flow suppressed so `InferenceSession` cannot marshal onto the Unity main thread. `GenerateSpeechAsync` runs preload+synth in one worker. `UnloadModels()` drops the engine without permanently disposing the factory.
-- Editor domain reload: `KeepNativeSessionsAcrossReload` detaches native `OrtSession` / `OrtEnv` handles **and** AllocHGlobal CustomVoice embedding matrices (npy + precomputed CP projections, ~1.5 GB) before unload, then wraps them after. Script compile / Play does not rebuild graphs or re-read npy. Default `OrtEnv` (no custom logger fn ptr — a Unity callback here SIGSEGVs after reload). First load still streams npy into native RAM with unsafe `FileStream.Read` + parallel projection. `UnloadModels()` still releases.
-- CustomVoice `vocoder.onnx` output is `[batch, 1, samples]`. Do not read `Dimensions[1]` as waveform length (that trimmed speech to 1 sample).
+### API
 
-## [0.1.0] - 2025-05-17
+- `QwenTts` facade with explicit residency: `WarmUpAsync`, `Evict`, `EvictAll`,
+  `GetStatus`. Each checkpoint is ~13 GB resident and they are normally needed
+  in different phases, so holding both is opt-in rather than automatic.
+- Configurable `ModelRoot`. Weights no longer have to live in StreamingAssets.
+- Per-utterance `SpeechOptions`: language (10 plus auto), sampling and
+  sub-talker sampling, output rate, frame cap.
+- `CancellationToken` and `IProgress<SpeechProgress>` on generation.
+- Clone prompts persist. A saved cloned voice stores its x-vector and reference
+  codes, so reloading no longer re-runs the speaker encoder and the 12 Hz
+  tokenizer behind a ~370 MB session.
+- `VoiceDesignSpec.Instruct` is the voice. The previous API took
+  gender/pitch/speed dropdowns and synthesised an English sentence from them
+  inside the library, which was host policy in engine code and English-only.
+- Voice manifests no longer name files that may not exist.
 
-### Added
-- Initial release of Spark TTS Unity package
-- Basic text-to-speech and voice cloning functionality
-- Sample scripts and example implementation
-- Support for Unity 6000.0.46f1 and newer 
+### Performance
+
+- Projected codec rows are filled on first use. Projecting every row of all 16
+  tables up front was ~71 GFLOP to serve the ~16 rows a frame reads, and
+  dominated a ~14 s load; checkpoints now come up in well under a second.
+- Talker decode and the 15-step code-predictor loop reuse KV buffers over the
+  `OrtValue` API. Copying every output every step was gigabytes of large-object
+  churn per line.
+- The two checkpoints have separate locks, so they can generate concurrently.
+
+### Editor
+
+- Domain-reload keep-alive moved into the editor assembly. The runtime side is
+  a small handoff with no reflection; the native-handle and OrtEnv work lives
+  where domain reloads actually happen. It reports unavailability instead of
+  failing if a future ONNX Runtime moves the private members it uses.
+- Embedding tables are no longer stashed across reload — they re-read in under
+  a second, which did not justify a hand-packed blob of raw pointers.
+- **Window → Qwen3 TTS → Model Status** replaces the Spark deployment tool.
+
+### Removed
+
+- The Spark-TTS BiCodec engine, its tokenizer service and model wrappers.
+- Preset-speaker ("CustomVoice") entry points, which were the only readers of
+  `speaker_ids.json`.
+- `ORTModel`'s index-based input staging and preallocated-output paths: no Qwen
+  graph has fixed output shapes. Load policy, execution-provider selection with
+  CoreML caching and fallbacks, iOS handling and off-thread session opening are
+  all retained.

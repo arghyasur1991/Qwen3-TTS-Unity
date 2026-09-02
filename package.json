@@ -1,8 +1,8 @@
 {
-  "name": "com.genesis.sparktts.unity",
+  "name": "com.genesis.qwentts.unity",
   "version": "0.1.0",
-  "displayName": "Spark TTS Unity",
-  "description": "Unity package for using Spark-TTS on-device models",
+  "displayName": "Qwen3 TTS Unity",
+  "description": "On-device Qwen3-TTS (12 Hz) for Unity via ONNX Runtime. VoiceDesign generates a speaker from a natural-language instruct; Base clones one from a reference recording using the official in-context path. Weights are not included or downloaded - see the README for the install layout and the memory budget.",
   "unity": "6000.0",
   "unityRelease": "46f1",
   "dependencies": {
@@ -13,17 +13,12 @@
     "tts",
     "speech",
     "audio",
-    "spark",
-    "voice"
+    "qwen",
+    "voice",
+    "voice-cloning",
+    "onnx"
   ],
   "author": {
     "name": "Genesis"
-  },
-  "samples": [
-    {
-      "displayName": "Character Voice Demo",
-      "description": "Demo of using Spark TTS in Unity",
-      "path": "Samples/Examples"
-    }
-  ]
+  }
 }

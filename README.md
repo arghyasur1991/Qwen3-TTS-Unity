@@ -1,404 +1,185 @@
-# Spark-TTS-Unity
+# Qwen3-TTS for Unity
 
-Unity package for on-device text-to-speech. Public API (`CharacterVoiceFactory`, `CharacterVoice`) matches the original Spark-TTS Unity port.
+On-device text-to-speech using the **Qwen3-TTS 12 Hz 1.7B** checkpoints through
+ONNX Runtime. Two capabilities, each a separate model:
 
-**`qwen3-tts` branch:** style TTS is [Qwen3-TTS 1.7B CustomVoice ONNX](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX); voice cloning is [1.7B Base ONNX](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL). Place weights locally — this package never downloads them. See **[QWEN3.md](QWEN3.md)**.
+| Checkpoint | What it does |
+|---|---|
+| **VoiceDesign** | Invents a speaker from a natural-language instruct. A different person every generate. |
+| **Base** | Clones a speaker from a reference recording, using Qwen's in-context path (reference codes + transcript + x-vector). |
 
-## What is Spark-TTS?
+The usual flow is both: design until you like a take, then clone that take so it
+stays put.
 
-Spark-TTS is an open-source text-to-speech system capable of generating high-quality, natural-sounding speech directly on your device. This Unity package makes it easy to incorporate this technology into your Unity projects.
+This package **does not include or download weights.** Export them yourself with
+`Tools~/qwen3_tts_onnx/export_all.py` and point the package at the result.
 
-## Key Features:
+---
 
-* 🎮 **Unity-Native Integration**: Simple API designed specifically for Unity
-* 🔊 **Voice Styling**: Customize gender, pitch, and speed parameters
-* 🎭 **Voice styling**: Gender, pitch, and speed (mapped to Qwen speakers + instruct on this branch)
-* 💻 **Runs Offline**: All processing happens on-device
-* ⚡ **Optimized Performance**: Caching system for faster repeated generation
+## Read this first: it is not a small model
 
-## Perfect For:
+Measured on an Apple-silicon Mac, CPU execution provider, FP32:
 
-* Indie games with lots of dialogue
-* Accessibility features
-* Prototyping narrative content
-* Dynamic content generation
-* Interactive tutorials
+| | Per checkpoint |
+|---|---|
+| Disk | ~13 GB |
+| Resident when loaded | ~12.9 GB (11.4 GB of ONNX sessions + ~1.5 GB embedding tables) |
+| Cold session open | ~21 s (~5 s with a warm page cache) |
+| Generation speed | ~4x slower than real time |
 
-## Installation
+ONNX Runtime does **not** keep the external `.onnx.data` lazily mapped — resident
+memory tracks file size roughly 1:1. Budget accordingly:
 
-### Using Unity Package Manager (Recommended)
+- **One checkpoint resident:** 32 GB machine is comfortable, 16 GB is not.
+- **Both resident:** wants 64 GB. Usually avoidable — see *Residency* below.
+- **Mobile and XR are out of scope** at FP32. The package compiles everywhere,
+  but 13 GB of weights does not fit in a phone or headset app.
 
-1. Open your Unity project
-2. Open the Package Manager (Window > Package Manager)
-3. Click the "+" button in the top-left corner
-4. Select "Add package from git URL..."
-5. Enter the repository URL: `https://github.com/arghyasur1991/Spark-TTS-Unity.git`
-6. Click "Add"
+Supported and tested: Unity 6000.x editor, Windows and macOS standalone.
 
-### Manual Installation
+## Install
 
-1. Clone this repository
-2. Copy the contents into your Unity project's Assets folder
-
-## Dependencies
-
-This package requires the following Unity packages:
-- com.github.asus4.onnxruntime (0.4.0)
-- com.github.asus4.onnxruntime-extensions (0.4.0)
-- com.unity.nuget.newtonsoft-json (3.2.1)
-
-### Setting up Package Dependencies
-
-Some dependencies require additional scoped registry configuration. Add the following to your project's `Packages/manifest.json` file:
-
-```json
-{
-  "scopedRegistries": [
-    {
-      "name": "NPM",
-      "url": "https://registry.npmjs.com",
-      "scopes": [
-        "com.github.asus4"
-      ]
-    }
-  ],
-  "dependencies": {
-    "com.genesis.sparktts.unity": "file:/path/to/Spark-TTS-Unity",
-    // ... other dependencies
-  }
-}
-```
-
-**Note**: Replace `/path/to/Spark-TTS-Unity` with the actual path to your Spark-TTS-Unity package folder.
-
-## Features
-
-- On-device text-to-speech synthesis
-- Voice styling with adjustable gender, pitch, and speed
-- Voice cloning via `CreateFromReference(clip, refText)` (official ICL) when 1.7B Base ONNX is present (see QWEN3.md)
-- Optimized for runtime performance
-- Simple API for integration into games and applications
-
-## Usage
-
-### Initialization
-
-Before using SparkTTS, you should initialize the factory with your preferred settings:
+1. Export a checkpoint (see `Tools~/qwen3_tts_onnx/`). You need one folder per
+   checkpoint, named:
+   - `Qwen3-TTS-12Hz-1.7B-VoiceDesign`
+   - `Qwen3-TTS-12Hz-1.7B-Base`
+2. Put those folders under a root of your choosing.
+3. Point the package at the root and check what it found:
 
 ```csharp
-using SparkTTS;
-using SparkTTS.Models;
-using SparkTTS.Utils;
+QwenTts.Initialize(new QwenTtsSettings
+{
+    ModelRoot = Path.Combine(Application.persistentDataPath, "QwenTTS"),
+    MemoryUsage = MemoryUsage.Balanced,
+    LogLevel = LogLevel.INFO,
+});
 
-// Initialize with default settings (Balanced memory usage, CPU execution)
-CharacterVoiceFactory.Initialize();
-
-// Or customize initialization
-CharacterVoiceFactory.Initialize(
-    logLevel: LogLevel.INFO,
-    memoryUsage: MemoryUsage.Performance,  // Performance, Balanced, or Optimal
-    executionProvider: ExecutionProvider.CoreML  // CPU, CUDA, or CoreML
-);
+var status = QwenTts.GetStatus(QwenCheckpoint.Base);
+Debug.Log(status);   // installed / loaded / missing files / bytes
 ```
 
-#### Memory Usage Modes
+`ModelRoot` defaults to `StreamingAssets/QwenTTS`, which is convenient in the
+editor and usually wrong for a shipped player — StreamingAssets is copied into
+the build. Prefer a folder you install or download into.
 
-SparkTTS supports three memory usage patterns:
+`Pocket Hamlet` style hosts can also use **Window → Qwen3 TTS → Model Status** to
+see the same information without writing code.
 
-- **`MemoryUsage.Performance`**: Loads all models at startup for fastest inference. Higher memory usage (~3GB). Best for desktop applications.
-- **`MemoryUsage.Balanced`**: Loads models on demand and keeps them in memory. Good balance of speed and memory usage. (Default)
-- **`MemoryUsage.Optimal`**: Loads models on demand and disposes them after use. Lowest memory usage but slower. Best for mobile devices.
-
-#### Waiting for Models to Load (Performance Mode)
-
-When using Performance mode, you may want to wait for all models to finish loading before generating speech:
+## Designing a voice
 
 ```csharp
-async void Start()
-{
-    CharacterVoiceFactory.Initialize(
-        LogLevel.INFO, 
-        MemoryUsage.Performance,
-        ExecutionProvider.CoreML
-    );
-    
-    // Wait for all models to be ready
-    await CharacterVoiceFactory.WaitForModelsLoadedAsync();
-    
-    Debug.Log("All models loaded and ready!");
-    
-    // Now create voices and generate speech...
-}
+var voice = await QwenTts.CreateDesignedVoiceAsync(new VoiceDesignSpec(
+    "Male, thirties, warm and conversational, close-mic, not a narrator."));
+
+var take = await voice.SpeakAsync("So you actually put it on.");
+audioSource.clip = take.ToAudioClip();     // main thread
+audioSource.Play();
 ```
 
-### Basic Voice Generation Using Styles
+The instruct *is* the voice. Calling `SpeakAsync` again gives you the same style
+in a different person's mouth — that is what the checkpoint does. There is no
+seed that pins it.
+
+## Keeping a voice: clone the take
 
 ```csharp
-using UnityEngine;
-using SparkTTS;
-using SparkTTS.Utils;
-using System.Threading.Tasks;
+// Render something long enough to characterise the speaker.
+var line  = "I am Alex. I am your friend, and a really brilliant scientist.";
+var take  = await voice.SpeakAsync(line);
 
-public class TTSExample : MonoBehaviour
-{
-    private CharacterVoice characterVoice;
-    private AudioSource audioSource;
+// The transcript is required: it is what makes this in-context cloning
+// rather than a generic x-vector match.
+var locked = await QwenTts.CreateClonedVoiceAsync(take.ToAudioClip(), line);
 
-    async void Start()
-    {
-        // Initialize with Performance mode for fastest inference
-        CharacterVoiceFactory.Initialize(
-            LogLevel.INFO, 
-            MemoryUsage.Performance,
-            ExecutionProvider.CoreML
-        );
-        
-        // Wait for all models to be ready (Performance mode only)
-        await CharacterVoiceFactory.WaitForModelsLoadedAsync();
-        
-        // Get reference to AudioSource
-        audioSource = GetComponent<AudioSource>();
-        
-        // Get the singleton instance of the factory
-        var voiceFactory = CharacterVoiceFactory.Instance;
-        
-        // Create a styled voice (gender: male/female, pitch: very_low/low/moderate/high/very_high, speed: very_low/low/moderate/high/very_high)
-        characterVoice = await voiceFactory.CreateFromStyleAsync(
-            gender: "female",
-            pitch: "moderate", 
-            speed: "moderate",
-            referenceText: "Hello, I am a character voice sample."
-        );
-        
-        // Generate and play speech
-        if (characterVoice != null)
-        {
-            await GenerateAndPlaySpeech("Hello, welcome to my game! I'm an on-device TTS voice.");
-        }
-    }
-    
-    public async Task GenerateAndPlaySpeech(string text)
-    {
-        if (characterVoice == null) return;
-        
-        AudioClip generatedClip = await characterVoice.GenerateSpeechAsync(text);
-        
-        if (generatedClip != null && audioSource != null)
-        {
-            audioSource.clip = generatedClip;
-            audioSource.Play();
-        }
-    }
-    
-    private void OnDestroy()
-    {
-        // Clean up resources
-        characterVoice?.Dispose();
-        // Note: Don't dispose the factory instance as it's a singleton
-    }
-}
+var next = await locked.SpeakAsync("Careful with that.");
 ```
 
-### Voice Cloning from Reference Audio
+Reference audio quality decides clone quality:
+
+- **At least 4 seconds.** Shorter and there are too few 12 Hz frames to pin a
+  speaker; takes drift between utterances. The package warns below this.
+- **Keep it at 24 kHz.** The speaker encoder reads mel up to 12 kHz, so a 16 kHz
+  reference has the top of the identifying band already missing. `SpeakAsync`
+  returns 24 kHz unless you ask for something else. The package warns if a
+  reference is lower.
+- **Pass the exact transcript.** Without it you get a stable voice that is not
+  the one in your recording.
+
+## Saving and reloading
 
 ```csharp
-using UnityEngine;
-using SparkTTS;
-using System.Threading.Tasks;
+await locked.SaveAsync(folder, take);              // take is optional
+var again = await QwenTts.LoadVoiceAsync(folder);
+```
 
-public class VoiceCloningExample : MonoBehaviour
+A saved clone stores the derived prompt (x-vector plus reference codes) next to
+the reference audio, so reloading is a file read rather than another
+speaker-encoder and tokenizer-encoder run. If the prompt file is from an older
+export it is ignored and the prompt is re-derived from the reference.
+
+## Residency
+
+Each checkpoint is ~13 GB, and the two are normally needed in *different phases*
+— VoiceDesign while the player is picking a voice, Base for everything after. So
+load and drop them explicitly instead of holding both:
+
+```csharp
+await QwenTts.WarmUpAsync(QwenCheckpoint.VoiceDesign);   // loading screen
+// ... player auditions voices, picks one, you clone it ...
+QwenTts.Evict(QwenCheckpoint.VoiceDesign);               // ~13 GB back
+await QwenTts.WarmUpAsync(QwenCheckpoint.Base);
+```
+
+`WarmUpAsync` matters: without it the first utterance pays the whole session
+open (~21 s cold). `MemoryUsage` controls the default policy:
+
+| Mode | Behaviour |
+|---|---|
+| `Performance` | Load eagerly, never drop. |
+| `Balanced` | Load on first use, keep. Default. |
+| `Optimal` | Load per use, dispose after. Idle stays near the embedding tables (~1.5 GB) at the cost of reopening per utterance. |
+
+## Generation options
+
+```csharp
+await voice.SpeakAsync(text, new SpeechOptions
 {
-    public AudioClip referenceClip; // Assign in inspector
-    private CharacterVoice clonedVoice;
-    private AudioSource audioSource;
-    
-    async void Start()
-    {
-        // Initialize with Optimal mode for mobile devices
-        CharacterVoiceFactory.Initialize(
-            LogLevel.WARNING, 
-            MemoryUsage.Optimal,
-            ExecutionProvider.CPU
-        );
-        
-        audioSource = GetComponent<AudioSource>();
-        
-        // Get the singleton instance of the factory
-        var voiceFactory = CharacterVoiceFactory.Instance;
-        
-        if (referenceClip != null)
-        {
-            // Clone voice from reference audio (note: this is async)
-            clonedVoice = await voiceFactory.CreateFromReferenceAsync(referenceClip);
-            Debug.Log("Voice cloned from reference audio");
-        }
-    }
-    
-    public async void SpeakText(string text)
-    {
-        if (clonedVoice == null) return;
-        
-        AudioClip generatedClip = await clonedVoice.GenerateSpeechAsync(text);
-        
-        if (generatedClip != null && audioSource != null)
-        {
-            audioSource.clip = generatedClip;
-            audioSource.Play();
-        }
-    }
-    
-    private void OnDestroy()
-    {
-        clonedVoice?.Dispose();
-        // Note: Don't dispose the factory instance as it's a singleton
-    }
-}
+    Language   = QwenLanguages.Default,   // 10 languages, or QwenLanguages.Auto
+    SampleRate = 24000,                   // 0 keeps native
+    Temperature = 0.9f, TopK = 50, TopP = 1f, RepetitionPenalty = 1.05f,
+    MaxNewTokens = 2048,                  // 12 Hz frames; 2048 is ~2.7 minutes
+},
+progress: new Progress<SpeechProgress>(p => Debug.Log($"{p.Seconds:0.0}s")),
+cancellationToken: token);
 ```
 
-## Model Deployment Tool
+Defaults match Qwen's own generate config. Generation is ~4x slower than real
+time, so pass a `CancellationToken` for anything the player can skip.
 
-SparkTTS includes a built-in Editor tool that automatically copies the required models from `Assets/Models` to `StreamingAssets` with the correct precision settings.
+## Threading
 
-**Access the tool**: `Window > SparkTTS > Model Deployment Tool`
+`SpeakAsync`, `WarmUpAsync` and the create calls do their work on the thread
+pool and are safe to await from the main thread. `AudioClip.GetData` and
+`AudioClip.Create` are Unity main-thread APIs, so a reference clip is read on
+the calling thread and `SpeechResult.ToAudioClip()` must be called on the main
+thread — that is why generation returns PCM rather than a clip.
 
-### Key Features
+The two checkpoints have independent locks, so a designed and a cloned voice can
+generate at the same time. Two utterances on the *same* checkpoint serialise,
+because the talker reuses its KV and sampler buffers.
 
-* **Precision-Aware**: Uses optimal precision variants (FP16/FP32) for each model
-* **Large Model Support**: Handles `model.onnx_data` files automatically
-* **Size Optimization**: Only copies necessary models to reduce build size
-* **Backup Support**: Creates backups of existing models before overwriting
-* **Dry Run Mode**: Preview changes without actually copying files
+## Editor: holding models across a script compile
 
-### How to Use
+A domain reload would otherwise throw away ~22 s of session loading on every
+compile. `QwenTTS.Editor` can detach the native ONNX allocations before the
+reload and reattach them after. It is opt-in, does nothing unless the host asks
+for it, and degrades to a normal reload if a future ONNX Runtime moves the
+private members it relies on.
 
-1. **Open the tool**: Go to `Window > SparkTTS > Model Deployment Tool`
-2. **Configure paths**: 
-   - Source: `Assets/Models` (automatically detected)
-   - Destination: `Assets/StreamingAssets/SparkTTS` (automatically configured)
-3. **Select components**: 
-   - ✅ **SparkTTS Models** / **LLM Models** (legacy Spark ONNX; unused on `qwen3-tts`)
-   - ✅ **Qwen3-TTS 1.7B** (`StreamingAssets/SparkTTS/Qwen3-1.7B/`)
-4. **Review selection**: The tool shows exactly which models will be copied and their file sizes
-5. **Deploy**: Click "Deploy SparkTTS Models" to copy the optimized model set
+## Licence and attribution
 
-### Model Precision Settings
-
-| Model | Precision | Notes |
-|---|---|---|
-| wav2vec2_model | FP16 | Optimized for audio processing |
-| bicodec_encoder_quantizer | FP32 | Full precision for quality |
-| bicodec_vocoder | FP32 | Full precision for quality |
-| mel_spectrogram | FP32 | Audio feature extraction |
-| speaker_encoder_tokenizer | FP32 | Speaker encoding |
-| LLM model | FP32 | Large language model (includes 1.9GB data file) |
-
-### Advanced Options
-
-* **Overwrite Existing**: Replace existing models in StreamingAssets
-* **Create Backup**: Keep .backup copies of replaced files
-* **Dry Run**: Preview operations without copying files
-
-### Integration with [LiveTalk-Unity](https://github.com/arghyasur1991/LiveTalk-Unity)
-
-This tool can be used standalone or integrated with LiveTalk's deployment tool. When using LiveTalk, the SparkTTS models are automatically deployed through this tool's API.
-
-## Model Setup
-
-This package requires Spark-TTS models in the following location:
-
-```
-Assets/StreamingAssets/SparkTTS/
-  ├── bicodec_encoder_quantizer.onnx
-  ├── bicodec_vocoder.onnx
-  ├── mel_spectrogram.onnx
-  ├── speaker_encoder_tokenizer.onnx
-  ├── wav2vec2_model.onnx
-  └── LLM/
-      ├── model.onnx
-      ├── model.onnx_data
-      ├── config.json
-      ├── generation_config.json
-      ├── added_tokens.json
-      ├── tokenizer.json
-      ├── tokenizer_config.json
-      ├── special_tokens_map.json
-      ├── vocab.json
-      └── merges.txt
-```
-
-You can obtain these models by using the `export_sparktts_onnx.py` script from the [Spark-TTS repository](https://github.com/arghyasur1991/Spark-TTS). This script converts the original PyTorch models to ONNX format for use in Unity.
-
-### Exporting Models
-
-1. Clone the Spark-TTS repository: `git clone https://github.com/arghyasur1991/Spark-TTS.git`
-2. Install the required dependencies
-3. Run the export script: `python export_sparktts_onnx.py`
-4. Copy the `SparkTTS` folder with exported ONNX models inside `onnx_models` to your Unity project's `Assets/Models` directory
-5. **Use the Model Deployment Tool** (recommended): Go to `Window > SparkTTS > Model Deployment Tool` to automatically copy only the required models with optimal precision settings
-
-### Pre-Exported ONNX Models
-
-As an alternative to running the export script, you can download pre-exported ONNX models from this [Google Drive link](https://drive.google.com/file/d/1YXj81ApcEasY17a8Zj9RqTpvn4s1UKk7/view?usp=sharing).
-
-1. Download the ZIP file from the link
-2. Extract the contents
-3. Copy the extracted `SparkTTS` folder with models to your Unity project's `Assets/Models/` directory
-4. **Use the Model Deployment Tool** (recommended): Go to `Window > SparkTTS > Model Deployment Tool` to automatically copy only the required models with optimal precision settings
-
-**Or manually copy**: Copy the `SparkTTS` folder directly to `Assets/StreamingAssets/` (includes all model variants)
-
-## Sample Demo
-
-The package includes a CharacterVoiceDemo that demonstrates:
-- Creating male and female voices with adjustable pitch and speed
-- Generating speech from text input
-- Playing generated audio
-
-To use the demo:
-1. Import the package
-2. Add the demo prefab to your scene
-3. Set up the required models in StreamingAssets
-4. Run the scene and interact with the UI
-
-## Requirements
-
-- Unity 6000.0.46f1 or newer
-- Supported platforms: macOS (Tested on Mac M4 Max), iOS (Tested on iPhone 14 Pro), Windows (Not tested)
-- Minimum 16GB RAM for runtime operation
-- Storage space for TTS models (~3GB)
-
-## License
-
-This Unity package is provided under the [LICENSE](LICENSE) file terms.
-
-### Model License
-
-The original Spark-TTS models and code are licensed under the [Apache License 2.0](https://github.com/SparkAudio/Spark-TTS/blob/main/LICENSE).
-
-```
-Copyright 2025 The Spark-TTS Authors
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
-## Usage Disclaimer
-
-This project provides a zero-shot voice cloning TTS model intended for academic research, educational purposes, and legitimate applications, such as personalized speech synthesis, assistive technologies, and linguistic research.
-
-Please note:
-
-- Do not use this model for unauthorized voice cloning, impersonation, fraud, scams, deepfakes, or any illegal activities.
-- Ensure compliance with local laws and regulations when using this model and uphold ethical standards.
-- The developers assume no liability for any misuse of this model.
-
-We advocate for the responsible development and use of AI and encourage the community to uphold safety and ethical principles in AI research and applications. 
+Apache-2.0. The ONNX inference path derives from
+[ElBruno.QwenTTS](https://github.com/elbruno/ElBruno.QwenTTS) (MIT), and the
+prompt construction follows Alibaba's `qwen-tts` reference implementation
+(Apache-2.0). Model weights are Alibaba's, under their own licence. See
+`THIRD_PARTY_NOTICES.md`.

@@ -1,19 +1,24 @@
+#if UNITY_EDITOR
 using UnityEditor;
-using SparkTTS;
 
-namespace SparkTTS.Editor
+namespace QwenTTS.Editor
 {
     /// <summary>
-    /// Stash/restore native ONNX sessions across script domain reload.
+    /// Hooks the domain reload so a script compile does not throw away
+    /// multi-gigabyte ONNX sessions. Only acts when the host has asked to hold
+    /// them (see <c>NativeSessionKeepAlive.KeepRequested</c>).
     /// </summary>
     [InitializeOnLoad]
-    static class NativeSessionReloadHook
+    internal static class NativeSessionReloadHook
     {
         static NativeSessionReloadHook()
         {
-            AssemblyReloadEvents.beforeAssemblyReload += CharacterVoiceFactory.StashNativeForReload;
-            AssemblyReloadEvents.afterAssemblyReload += CharacterVoiceFactory.TryRestoreNativeAfterReload;
-            CharacterVoiceFactory.TryRestoreNativeAfterReload();
+            AssemblyReloadEvents.beforeAssemblyReload += NativeSessionKeepAlive.StashBeforeReload;
+            AssemblyReloadEvents.afterAssemblyReload += NativeSessionKeepAlive.RestoreAfterReload;
+            // Also on first load of a fresh domain, where the reload event for
+            // this domain has already been and gone.
+            NativeSessionKeepAlive.RestoreAfterReload();
         }
     }
 }
+#endif
