@@ -24,6 +24,16 @@ namespace QwenTTS.Engine
 internal sealed class LanguageModel : IDisposable
 {
     private readonly EmbeddingStore _embeddings;
+    // One talker graph when the checkpoint has it, otherwise the older
+    // prefill/decode pair. Same weights either way; the pair just costs twice
+    // the memory because both have to be resident for one utterance.
+    static readonly string[] UnifiedInputNames =
+    {
+        "inputs_embeds", "attention_mask", "position_ids", "past_keys", "past_values"
+    };
+
+    private readonly bool _unifiedTalker;
+    private readonly QwenOnnxModel _talker;
     private readonly QwenOnnxModel _prefill;
     private readonly QwenOnnxModel _decode;
     private readonly QwenOnnxModel _codePredictor;
@@ -45,8 +55,16 @@ internal sealed class LanguageModel : IDisposable
         ExecutionProvider executionProvider = ExecutionProvider.CPU)
     {
         _embeddings = embeddings;
-        _prefill = new QwenOnnxModel(QwenModelPaths.GraphTalkerPrefill, checkpoint, executionProvider);
-        _decode = new QwenOnnxModel(QwenModelPaths.GraphTalkerDecode, checkpoint, executionProvider);
+        _unifiedTalker = QwenModelPaths.HasUnifiedTalker(checkpoint);
+        if (_unifiedTalker)
+        {
+            _talker = new QwenOnnxModel(QwenModelPaths.GraphTalker, checkpoint, executionProvider);
+        }
+        else
+        {
+            _prefill = new QwenOnnxModel(QwenModelPaths.GraphTalkerPrefill, checkpoint, executionProvider);
+            _decode = new QwenOnnxModel(QwenModelPaths.GraphTalkerDecode, checkpoint, executionProvider);
+        }
         _codePredictor = new QwenOnnxModel(QwenModelPaths.GraphCodePredictor, checkpoint, executionProvider);
 
         // Read dimensions from config.json (loaded by EmbeddingStore)
@@ -63,9 +81,11 @@ internal sealed class LanguageModel : IDisposable
         _suppressTokens = QwenTokenSampler.SuppressUpperCodec(cfg.talker.vocab_size, cfg.talker.codec_eos_token_id);
     }
 
-    private InferenceSession GetPrefillSession() => _prefill.GetSession();
+    private InferenceSession GetPrefillSession() =>
+        _unifiedTalker ? _talker.GetSession() : _prefill.GetSession();
 
-    private InferenceSession GetDecodeSession() => _decode.GetSession();
+    private InferenceSession GetDecodeSession() =>
+        _unifiedTalker ? _talker.GetSession() : _decode.GetSession();
 
     private InferenceSession GetCpSession() => _codePredictor.GetSession();
 
@@ -186,11 +206,42 @@ internal sealed class LanguageModel : IDisposable
             using var maskOrt = OrtValue.CreateTensorValueFromMemory(OrtMemoryInfo.DefaultInstance, new Memory<long>(flatMask, 0, 1 * prefillLen), new long[] { 1, prefillLen });
             using var posOrt = OrtValue.CreateTensorValueFromMemory(OrtMemoryInfo.DefaultInstance, new Memory<long>(flatPosIds, 0, 3 * 1 * prefillLen), new long[] { 3, 1, prefillLen });
 
-            var inputNames = new[] { "inputs_embeds", "attention_mask", "position_ids" };
             cancellationToken.ThrowIfCancellationRequested();
-            using (var prefillOutputs = prefillSession.Run(new RunOptions(), inputNames,
-                new[] { embedsOrt, maskOrt, posOrt }, prefillSession.OutputNames))
+            if (_unifiedTalker)
             {
+                // A prefill is the same graph with nothing in the cache. The
+                // empty past is a real zero-length tensor, which ONNX Runtime
+                // accepts (the code predictor is fed one the same way on its
+                // first group).
+                var emptyKv = Array.Empty<float>();
+                var emptyShape = new long[] { _numLayers, 1, _numKvHeads, 0, _headDim };
+                using var pastKeysOrt = OrtValue.CreateTensorValueFromMemory(
+                    OrtMemoryInfo.DefaultInstance, new Memory<float>(emptyKv), emptyShape);
+                using var pastValuesOrt = OrtValue.CreateTensorValueFromMemory(
+                    OrtMemoryInfo.DefaultInstance, new Memory<float>(emptyKv), emptyShape);
+
+                var names = new List<string>(prefillSession.OutputNames);
+                int iLogits = OutputIndex(names, "logits");
+                int iHidden = OutputIndex(names, "hidden_states");
+                int iKeys = OutputIndex(names, "present_keys");
+                int iValues = OutputIndex(names, "present_values");
+
+                using var outputs = prefillSession.Run(new RunOptions(), UnifiedInputNames,
+                    new[] { embedsOrt, maskOrt, posOrt, pastKeysOrt, pastValuesOrt }, names);
+                logits = outputs[iLogits].GetTensorDataAsSpan<float>().ToArray();
+                hiddenStates = outputs[iHidden].GetTensorDataAsSpan<float>().ToArray();
+                var keys = outputs[iKeys].GetTensorDataAsSpan<float>();
+                var values = outputs[iValues].GetTensorDataAsSpan<float>();
+                pastKeys = Grow(pastKeys, keys.Length);
+                pastValues = Grow(pastValues, values.Length);
+                keys.CopyTo(pastKeys);
+                values.CopyTo(pastValues);
+            }
+            else
+            {
+                var inputNames = new[] { "inputs_embeds", "attention_mask", "position_ids" };
+                using var prefillOutputs = prefillSession.Run(new RunOptions(), inputNames,
+                    new[] { embedsOrt, maskOrt, posOrt }, prefillSession.OutputNames);
                 logits = prefillOutputs[0].GetTensorDataAsSpan<float>().ToArray();
                 hiddenStates = prefillOutputs[1].GetTensorDataAsSpan<float>().ToArray();
                 StackPrefillKVFromOrtValues(prefillOutputs, prefillLen, pastKeys, pastValues);
@@ -236,10 +287,7 @@ internal sealed class LanguageModel : IDisposable
         int outHidden = OutputIndex(decodeOutNames, "hidden_states");
         int outPresentKeys = OutputIndex(decodeOutNames, "present_keys");
         int outPresentValues = OutputIndex(decodeOutNames, "present_values");
-        var decodeInputNames = new[]
-        {
-            "inputs_embeds", "attention_mask", "position_ids", "past_keys", "past_values"
-        };
+        var decodeInputNames = UnifiedInputNames;
 
         var cpSessionForNames = GetCpSession();
         var cpOutNames = new List<string>(cpSessionForNames.OutputNames);
@@ -980,22 +1028,31 @@ internal sealed class LanguageModel : IDisposable
 
     internal void CollectOnnxModels(List<ORTModel> list)
     {
-        list.Add(_prefill);
-        list.Add(_decode);
+        if (_unifiedTalker)
+        {
+            list.Add(_talker);
+        }
+        else
+        {
+            list.Add(_prefill);
+            list.Add(_decode);
+        }
         list.Add(_codePredictor);
     }
 
     internal void PreloadSessions()
     {
         GetPrefillSession();
-        GetDecodeSession();
+        if (!_unifiedTalker)
+            GetDecodeSession();
         GetCpSession();
     }
 
     public void Dispose()
     {
-        _prefill.Dispose();
-        _decode.Dispose();
+        _talker?.Dispose();
+        _prefill?.Dispose();
+        _decode?.Dispose();
         _codePredictor.Dispose();
     }
 }

@@ -22,16 +22,22 @@ Measured on an Apple-silicon Mac, CPU execution provider, FP32:
 
 | | Per checkpoint |
 |---|---|
-| Disk | ~13 GB |
-| Resident when loaded | ~12.9 GB (11.4 GB of ONNX sessions + ~1.5 GB embedding tables) |
-| Cold session open | ~21 s (~5 s with a warm page cache) |
+| Disk | ~8 GB |
+| Resident when loaded | ~7.0 GB (5.4 GB of ONNX sessions + ~1.5 GB embedding tables) |
+| Cold session open | ~11 s (~3 s with a warm page cache) |
 | Generation speed | ~4x slower than real time |
 
 ONNX Runtime does **not** keep the external `.onnx.data` lazily mapped — resident
 memory tracks file size roughly 1:1. Budget accordingly:
 
-- **One checkpoint resident:** 32 GB machine is comfortable, 16 GB is not.
-- **Both resident:** wants 64 GB. Usually avoidable — see *Residency* below.
+- **One checkpoint resident:** 16 GB machine is fine, 32 GB comfortable.
+- **Both resident:** wants 32 GB. Usually avoidable — see *Residency* below.
+
+The talker is exported as a single graph that does both prefill and decode
+(a zero-length KV cache makes it a prefill). Exports predating that carry a
+`talker_prefill` + `talker_decode` pair, which is the same weights twice and
+doubles both figures above; they are still read, but re-exporting with
+`Tools~/qwen3_tts_onnx/export_talker_unified.py` halves the cost.
 - **Mobile and XR are out of scope** at FP32. The package compiles everywhere,
   but 13 GB of weights does not fit in a phone or headset app.
 

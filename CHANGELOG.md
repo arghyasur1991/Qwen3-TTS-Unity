@@ -10,6 +10,13 @@ Spark-TTS engine that shared that repo is not carried over.
 
 - Qwen3-TTS 12 Hz **VoiceDesign** and **Base** checkpoints, addressed
   independently.
+- **One talker graph instead of two.** `talker_prefill` and `talker_decode`
+  were the same 1.7B weights exported under two signatures, and both had to be
+  resident for one utterance. A zero-length KV cache makes the decode graph a
+  prefill, so `talker.onnx` serves both: resident memory for an utterance goes
+  from 11.35 GB to 5.36 GB and disk from ~13 GB to ~8 GB per checkpoint, with
+  outputs bit-exact against both graphs it replaces. Older installs keep the
+  pair and still work.
 - Base cloning follows Qwen's reference implementation: the in-context prompt
   sums the text and codec streams position-aligned (the layout
   `generate_voice_clone` actually defaults to), the reference codes are decoded
