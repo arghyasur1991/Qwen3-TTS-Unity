@@ -19,10 +19,10 @@ namespace QwenTTS.Engine
         public const string StreamingAssetsSubfolder = "QwenTTS";
 
         /// <summary>Folder name for the VoiceDesign checkpoint.</summary>
-        public const string VoiceDesignFolderName = "Qwen3-TTS-12Hz-1.7B-VoiceDesign";
+        public const string VoiceDesignFolderName = "Qwen3-1.7B-VoiceDesign";
 
         /// <summary>Folder name for the Base (voice clone) checkpoint.</summary>
-        public const string BaseFolderName = "Qwen3-TTS-12Hz-1.7B-Base";
+        public const string BaseFolderName = "Qwen3-1.7B-Base";
 
         // Graph file stems, shared by both checkpoints unless noted.
         public const string GraphTalkerPrefill = "talker_prefill";

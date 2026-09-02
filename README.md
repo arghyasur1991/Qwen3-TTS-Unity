@@ -41,8 +41,8 @@ Supported and tested: Unity 6000.x editor, Windows and macOS standalone.
 
 1. Export a checkpoint (see `Tools~/qwen3_tts_onnx/`). You need one folder per
    checkpoint, named:
-   - `Qwen3-TTS-12Hz-1.7B-VoiceDesign`
-   - `Qwen3-TTS-12Hz-1.7B-Base`
+   - `Qwen3-1.7B-VoiceDesign`
+   - `Qwen3-1.7B-Base`
 2. Put those folders under a root of your choosing.
 3. Point the package at the root and check what it found:
 
