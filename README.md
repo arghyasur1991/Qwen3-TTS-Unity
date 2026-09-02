@@ -22,10 +22,10 @@ Measured on an Apple-silicon Mac, CPU execution provider, FP32:
 
 | | Per checkpoint |
 |---|---|
-| Disk | ~8 GB |
+| Disk | ~8 GB (plus ~138 MB of baked projection tables) |
 | Resident when loaded | ~7.0 GB (5.4 GB of ONNX sessions + ~1.5 GB embedding tables) |
 | Cold session open | ~11 s (~3 s with a warm page cache) |
-| Generation speed | ~0.9x of real time (finishes just ahead of playback) |
+| Generation speed | ~0.97x of real time (finishes just ahead of playback) |
 
 ONNX Runtime does **not** keep the external `.onnx.data` lazily mapped — resident
 memory tracks file size roughly 1:1. Budget accordingly:

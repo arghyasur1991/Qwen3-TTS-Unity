@@ -18,13 +18,19 @@ Spark-TTS engine that shared that repo is not carried over.
   samples are handed over, which makes the concatenation match a single
   decode to 1.86e-6 rather than approximately. Opt-in; `SpeakAsync` is
   unchanged.
-- **2.13x faster generation**, now slightly ahead of realtime. Profiling
-  found half the wall clock outside the ONNX models entirely: the
-  codec-embedding projections, sixteen 1024x2048 matrix-vector products per
-  output frame, running as scalar C#. Row-parallel with independent
-  accumulators they are 14x faster (and the prefill text MLP 23x). The KV
-  cache copy that looked like the obvious O(T^2) culprit measured 0.8% and
-  was left alone.
+- **2.16x faster generation** (2101 -> 972 ms per second of audio), now
+  slightly ahead of realtime. Profiling found half the wall clock outside the
+  ONNX models entirely: the codec-embedding projections, sixteen 1024x2048
+  matrix-vector products per output frame, running as scalar C#. Row-parallel
+  with independent accumulators they are 14x faster (and the prefill text MLP
+  23x). The KV cache copy that looked like the obvious O(T^2) culprit measured
+  0.8% and was left alone.
+- **Baked projection tables.** Fifteen of those sixteen products per frame are
+  a pure function of export-time weights, so `bake_projected_tables.py` writes
+  them and the engine reads instead of computing - another 13x on that stage,
+  for ~138 MB per checkpoint. Verified byte-identical against on-demand
+  projection on a greedy utterance. Exports without the files fall back to
+  projecting on demand; a partial set is rejected rather than mixed.
 - **`QwenTts.ProfilingEnabled` / `ProfileReport()`** for per-stage wall clock,
   off by default.
 - **`QwenTtsSettings.IntraOpThreads`** to override ONNX Runtime's thread

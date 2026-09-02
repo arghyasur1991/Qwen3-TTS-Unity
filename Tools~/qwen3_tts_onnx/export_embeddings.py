@@ -12,6 +12,8 @@ import json
 import os
 
 import numpy as np
+
+import bake_projected_tables
 import torch
 
 
@@ -60,10 +62,13 @@ def export_embeddings(model, output_dir: str, model_id: str) -> None:
 
     proj = talker.code_predictor.small_to_mtp_projection
     if isinstance(proj, torch.nn.Linear):
-        np.save(os.path.join(embed_dir, "cp_projection_weight.npy"), proj.weight.detach().cpu().numpy())
-        np.save(os.path.join(embed_dir, "cp_projection_bias.npy"), proj.bias.detach().cpu().numpy())
-        print(f" cp_projection_weight: {tuple(proj.weight.shape)}")
-        print(f" cp_projection_bias: {tuple(proj.bias.shape)}")
+        pw = proj.weight.detach().cpu().numpy()
+        pb = proj.bias.detach().cpu().numpy()
+        np.save(os.path.join(embed_dir, "cp_projection_weight.npy"), pw)
+        np.save(os.path.join(embed_dir, "cp_projection_bias.npy"), pb)
+        print(f" cp_projection_weight: {tuple(pw.shape)}")
+        print(f" cp_projection_bias: {tuple(pb.shape)}")
+        bake_projected_tables.bake(embed_dir)
     else:
         print(" small_to_mtp_projection: Identity (no cp_projection npy)")
 
@@ -145,3 +150,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -43,6 +43,7 @@ vocoder.onnx[.data]
 speaker_encoder.onnx          Base only (x-vector for cloning)
 tokenizer_encoder.onnx        Base only (reference audio → codes)
 embeddings/*.npy              tables the C# reads directly, + config.json
+embeddings/*_proj.npy         codec tables with the projection pre-applied
 tokenizer/                    HF tokenizer files
 ```
 
@@ -59,6 +60,8 @@ tokenizer/                    HF tokenizer files
 | `export_embeddings.py` | Dumps embedding / projection tables as `.npy`. |
 | `mask_patch.py` | Replaces `transformers`' `create_causal_mask`, which uses `torch.vmap` and cannot be traced. Shape-generic, which is what lets one talker graph serve both phases. |
 | `_onnx_util.py` | Collapses an export to one `.onnx` + one `.onnx.data`. |
+| `bake_projected_tables.py` | Pre-applies the code-predictor projection to the codec embedding tables (~138 MB). Called by `export_embeddings.py`, and runnable against an existing export without reloading the checkpoint. |
+| `fp16_spike.py` | Measures whether fp16 / int8 are faster on a given ONNX Runtime build. They are not, for fp16 on the CPU provider — see below. |
 
 ## Reference implementations (debugging, not export)
 
@@ -89,3 +92,12 @@ python icl_prompt_ref.py --ref-wav <ref>.wav --ref-text "..." --text "..."
 - **Warnings from numpy matmul** (`divide by zero`, `invalid value`) on Apple
   Accelerate are spurious — verified NaN-free in and out. They are silenced in
   the reference scripts.
+- **Do not reach for fp16 on the CPU execution provider.** Measured with
+  `fp16_spike.py` on ONNX Runtime 1.21: the code predictor goes from 1.88 ms
+  to 30.72 ms per step, 17x *slower*, while being numerically near-perfect.
+  There are no fast fp16 kernels for these ops on Apple silicon, so it casts
+  and computes element-wise. int8 dynamic quantization is 1.38x faster and 4x
+  smaller, but shifts logits by 8%, so it is a quality decision.
+- **`onnxconverter_common` 1.16.0 cannot convert these graphs** — its
+  `remove_unnecessary_cast_node` throws `AttributeError`. Use
+  `onnxruntime.transformers.float16`, which is a maintained fork.

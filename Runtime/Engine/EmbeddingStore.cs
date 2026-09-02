@@ -42,6 +42,7 @@ namespace QwenTTS.Engine
         readonly int _hiddenSize;
         readonly int _cpHiddenSize;
         readonly int _cpModelHiddenSize;
+        bool _projectedTablesBaked;
 
         public ModelConfig Config { get; }
 
@@ -50,6 +51,12 @@ namespace QwenTTS.Engine
         public int CpHiddenSize => _cpHiddenSize;
         public bool HasCpProjection => _cpProjectionWeight != null && !_cpProjectionWeight.IsEmpty;
         public int CpModelHiddenSize => _cpModelHiddenSize;
+
+        /// <summary>
+        /// True when the projected codec tables came off disk rather than being
+        /// computed on first use of each row.
+        /// </summary>
+        public bool ProjectedTablesBaked => _projectedTablesBaked;
 
         public EmbeddingStore(string embeddingsDir, string configPath)
         {
@@ -101,8 +108,92 @@ namespace QwenTTS.Engine
                 if (_cpProjectionWeight.Cols != _hiddenSize)
                     throw new InvalidDataException(
                         $"CP projection input mismatch: weight columns ({_cpProjectionWeight.Cols}) != hidden_size ({_hiddenSize})");
-                AllocateProjected();
+                if (!LoadProjected(embeddingsDir))
+                    AllocateProjected();
             }
+        }
+
+        /// <summary>
+        /// Adopt pre-projected codec tables written by the exporter, if they
+        /// are all there.
+        ///
+        /// The projection is a pure function of weights fixed at export, and
+        /// computing it on demand was the largest single cost in synthesis. A
+        /// baked table turns it into a memory read. Partial or mismatched sets
+        /// are rejected wholesale rather than mixed with on-demand rows, so a
+        /// half-finished export cannot produce audio that is subtly wrong in
+        /// only some frames.
+        /// </summary>
+        bool LoadProjected(string embeddingsDir)
+        {
+            var talkerPath = Path.Combine(embeddingsDir, "talker_codec_embedding_proj.npy");
+            if (!File.Exists(talkerPath))
+                return false;
+            for (int g = 0; g < CpGroupCount; g++)
+            {
+                if (!File.Exists(Path.Combine(embeddingsDir, $"cp_codec_embedding_{g}_proj.npy")))
+                {
+                    QwenLog.LogWarning(
+                        "[EmbeddingStore] talker_codec_embedding_proj.npy is present but "
+                        + $"cp_codec_embedding_{g}_proj.npy is missing; projecting on demand instead. "
+                        + "Re-export to get the baked tables.");
+                    return false;
+                }
+            }
+
+            int projOutDim = _cpProjectionWeight.Rows;
+            NativeFloatBuffer talker = null;
+            var cp = new NativeFloatBuffer[CpGroupCount];
+            try
+            {
+                Parallel.Invoke(
+                    () => talker = NpyReader.ReadNative2D(talkerPath),
+                    () => Parallel.For(0, CpGroupCount, g =>
+                    {
+                        cp[g] = NpyReader.ReadNative2D(
+                            Path.Combine(embeddingsDir, $"cp_codec_embedding_{g}_proj.npy"));
+                    }));
+
+                if (talker.Cols != projOutDim || talker.Rows != _talkerCodecEmbedding.Rows)
+                    throw new InvalidDataException(
+                        $"talker_codec_embedding_proj.npy is ({talker.Rows}, {talker.Cols}), "
+                        + $"expected ({_talkerCodecEmbedding.Rows}, {projOutDim})");
+                for (int g = 0; g < CpGroupCount; g++)
+                {
+                    if (cp[g].Cols != projOutDim || cp[g].Rows != _cpCodecEmbeddings[g].Rows)
+                        throw new InvalidDataException(
+                            $"cp_codec_embedding_{g}_proj.npy is ({cp[g].Rows}, {cp[g].Cols}), "
+                            + $"expected ({_cpCodecEmbeddings[g].Rows}, {projOutDim})");
+                }
+            }
+            catch (Exception ex)
+            {
+                talker?.Free();
+                for (int g = 0; g < CpGroupCount; g++) cp[g]?.Free();
+                QwenLog.LogWarning(
+                    "[EmbeddingStore] Baked projected tables rejected, projecting on demand: "
+                    + ex.Message);
+                return false;
+            }
+
+            _projectedTalkerCodecEmbedding = talker;
+            _projectedCpCodecEmbeddings = cp;
+
+            // All rows already correct, so nothing is ever projected at runtime.
+            _projectedTalkerReady = new bool[talker.Rows];
+            for (int i = 0; i < _projectedTalkerReady.Length; i++)
+                _projectedTalkerReady[i] = true;
+            _projectedCpReady = new bool[CpGroupCount][];
+            for (int g = 0; g < CpGroupCount; g++)
+            {
+                var ready = new bool[cp[g].Rows];
+                for (int i = 0; i < ready.Length; i++) ready[i] = true;
+                _projectedCpReady[g] = ready;
+            }
+
+            _projectedTablesBaked = true;
+            QwenLog.Log("[EmbeddingStore] Using baked projected codec tables.");
+            return true;
         }
 
         static ModelConfig LoadConfig(string configPath)
