@@ -27,6 +27,14 @@ import onnxruntime as ort
 import soundfile as sf
 from transformers import AutoTokenizer
 
+# numpy 2.x on Apple's Accelerate BLAS raises "divide by zero" / "overflow" /
+# "invalid value encountered in matmul" from the vectorised kernel's padding
+# lanes, on inputs and outputs that are both free of NaN and Inf. Verified on
+# these tables: 0 NaN in, 0 NaN out, output range [-1.07, 0.43]. Silenced
+# because a reference script that cries NaN sends the next reader after a bug
+# that is not there. Remove this if the arithmetic itself is ever suspect.
+np.seterr(divide="ignore", over="ignore", invalid="ignore")
+
 DEFAULT_BASE = os.path.expanduser("~/Downloads/Qwen3-TTS-ONNX/Qwen3-1.7B-Base")
 GRAPH_SAMPLES = 480000  # must track QwenTokenizerEncoderModel.GraphSamples
 SAMPLES_PER_FRAME = 1920

@@ -40,7 +40,7 @@ if THIS not in sys.path:
 from export_code_predictor import export_code_predictor
 from export_embeddings import export_embeddings
 from export_speaker_encoder import export_speaker_encoder
-from export_talker_unified import export_unified
+from export_talker import export_talker
 from export_tokenizer_encoder import export_from_tts_model
 from export_vocoder import export_vocoder
 from mask_patch import patch_causal_mask
@@ -93,7 +93,7 @@ def main():
         export_from_tts_model(model, args.output_dir)
     if "talker" not in skip:
         print("\n===== talker =====")
-        export_unified(model, args.output_dir)
+        export_talker(model, args.output_dir)
     if "code_predictor" not in skip:
         print("\n===== code_predictor =====")
         export_code_predictor(model, args.output_dir)

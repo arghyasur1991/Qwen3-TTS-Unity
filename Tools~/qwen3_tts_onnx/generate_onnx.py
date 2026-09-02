@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""ONNX-only VoiceDesign generate. Prefill matches Spark C# BuildVoiceDesignPrefill.
+"""ONNX-only VoiceDesign generate, as a reference for the C# engine.
+
+Independent Python implementation of the same path `QwenTtsEngine` walks, off
+the same exported graphs and npy tables, so a suspect C# result can be diffed
+against something with no Unity in it. `icl_prompt_ref.py` is the equivalent
+for the Base clone prompt.
 
   python generate_onnx.py --text "The scanner sees your ceiling as their sky." \
       --instruct "Male, thirties, warm conversational friend." \
@@ -19,11 +24,38 @@ import soundfile as sf
 from transformers import AutoTokenizer
 
 
+# numpy 2.x on Apple's Accelerate BLAS raises "divide by zero" / "overflow" /
+# "invalid value encountered in matmul" from the vectorised kernel's padding
+# lanes, on inputs and outputs that are both free of NaN and Inf. Verified on
+# these tables: 0 NaN in, 0 NaN out, output range [-1.07, 0.43]. Silenced
+# because a reference script that cries NaN sends the next reader after a bug
+# that is not there. Remove this if the arithmetic itself is ever suspect.
+np.seterr(divide="ignore", over="ignore", invalid="ignore")
+
+
 def text_project_numpy(token_ids, text_emb, fc1_w, fc1_b, fc2_w, fc2_b):
     embeds = text_emb[token_ids]
     hidden = embeds @ fc1_w.T + fc1_b
     activated = hidden * (1.0 / (1.0 + np.exp(-hidden)))
     return activated @ fc2_w.T + fc2_b
+
+
+def _open_talker(model_dir):
+    """
+    The talker is one graph doing both phases (a zero-length past is a
+    prefill). Exports predating that have a talker_prefill/talker_decode pair
+    of the same weights, which this script no longer drives — re-export with
+    export_talker.py.
+    """
+    path = os.path.join(model_dir, "talker.onnx")
+    if not os.path.isfile(path):
+        raise SystemExit(
+            f"{path} not found. If this folder has talker_prefill.onnx and "
+            "talker_decode.onnx, it predates the unified talker; re-export "
+            "with export_talker.py.")
+    so = ort.SessionOptions()
+    so.log_severity_level = 3
+    return ort.InferenceSession(path, so, providers=["CPUExecutionProvider"])
 
 
 def load_embeddings(onnx_dir):
@@ -85,8 +117,7 @@ def generate_onnx(model_dir, text, instruct, language, output_path,
     tokenizer = AutoTokenizer.from_pretrained(os.path.join(model_dir, "tokenizer"))
 
     print(f"Loading ONNX from {model_dir} ...")
-    prefill_sess = ort.InferenceSession(os.path.join(model_dir, "talker_prefill.onnx"))
-    decode_sess = ort.InferenceSession(os.path.join(model_dir, "talker_decode.onnx"))
+    talker_sess = _open_talker(model_dir)
     cp_sess = ort.InferenceSession(os.path.join(model_dir, "code_predictor.onnx"))
     vocoder_sess = ort.InferenceSession(os.path.join(model_dir, "vocoder.onnx"))
 
@@ -164,16 +195,16 @@ def generate_onnx(model_dir, text, instruct, language, output_path,
     position_ids = np.arange(T).reshape(1, 1, T).repeat(3, axis=0)
 
     print(f" Prefill: {T} tokens")
-    prefill_out = prefill_sess.run(None, {
-        "inputs_embeds": prefill_embeds,
-        "attention_mask": attention_mask,
-        "position_ids": position_ids,
-    })
-    logits = prefill_out[0]
-    hidden_states = prefill_out[1]
-    kv_outputs = prefill_out[2:]
-    past_keys = np.stack([kv_outputs[i * 2] for i in range(num_layers)])
-    past_values = np.stack([kv_outputs[i * 2 + 1] for i in range(num_layers)])
+    kv_shape = (num_layers, 1, talker["num_key_value_heads"], 0, talker["head_dim"])
+    empty_kv = np.zeros(kv_shape, dtype=np.float32)
+    logits, hidden_states, past_keys, past_values = talker_sess.run(
+        ["logits", "hidden_states", "present_keys", "present_values"], {
+            "inputs_embeds": prefill_embeds,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "past_keys": empty_kv,
+            "past_values": empty_kv,
+        })
     trailing_hidden = tts_pad_embed.reshape(1, -1)
 
     suppress_mask = np.zeros(vocab_size, dtype=bool)
@@ -234,7 +265,7 @@ def generate_onnx(model_dir, text, instruct, language, output_path,
 
         decode_mask = np.ones((1, current_pos + 1), dtype=np.int64)
         decode_pos = np.array([[[current_pos]]]).repeat(3, axis=0)
-        decode_out = decode_sess.run(None, {
+        decode_out = talker_sess.run(None, {
             "inputs_embeds": next_embed,
             "attention_mask": decode_mask,
             "position_ids": decode_pos,
