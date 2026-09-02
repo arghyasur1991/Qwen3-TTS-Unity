@@ -191,21 +191,53 @@ namespace QwenTTS
         /// <see cref="MinRecommendedReferenceSeconds"/> seconds.
         /// </param>
         /// <param name="referenceText">Exact transcript of the reference audio.</param>
-        public static async Task<QwenVoice> CreateClonedVoiceAsync(AudioClip reference,
+        public static Task<QwenVoice> CreateClonedVoiceAsync(AudioClip reference,
             string referenceText, string language = null,
             CancellationToken cancellationToken = default)
         {
             RequireInitialized();
             if (reference == null)
                 throw new ArgumentNullException(nameof(reference));
+
+            // AudioClip.GetData is a main-thread Unity API, so the samples are
+            // extracted before anything is awaited. Callers that may not be on
+            // the main thread should use the PCM overload instead.
+            float[] samples = QwenTtsEngine.ClipToMono24k(reference);
+            return CreateClonedVoiceAsync(
+                samples, NativeSampleRate, referenceText, language, cancellationToken,
+                sourceSampleRate: reference.frequency, sourceSeconds: reference.length);
+        }
+
+        /// <summary>
+        /// Same as the <see cref="AudioClip"/> overload but takes raw mono PCM,
+        /// so it touches no Unity objects and can be called from any thread.
+        /// Prefer this when the reference came from a file rather than a clip.
+        /// </summary>
+        /// <param name="pcm">Mono samples in [-1, 1].</param>
+        /// <param name="sampleRate">Rate of <paramref name="pcm"/>.</param>
+        public static Task<QwenVoice> CreateClonedVoiceAsync(float[] pcm, int sampleRate,
+            string referenceText, string language = null,
+            CancellationToken cancellationToken = default)
+        {
+            return CreateClonedVoiceAsync(pcm, sampleRate, referenceText, language,
+                cancellationToken, sampleRate, pcm == null ? 0f : (float)pcm.Length / Math.Max(1, sampleRate));
+        }
+
+        static async Task<QwenVoice> CreateClonedVoiceAsync(float[] pcm, int sampleRate,
+            string referenceText, string language, CancellationToken cancellationToken,
+            int sourceSampleRate, float sourceSeconds)
+        {
+            RequireInitialized();
+            if (pcm == null || pcm.Length == 0)
+                throw new ArgumentException("Reference audio is empty.", nameof(pcm));
             language = string.IsNullOrWhiteSpace(language) ? QwenLanguages.Default : language;
             RequireLanguage(language);
 
-            WarnAboutReference(reference.frequency, reference.length);
+            WarnAboutReference(sourceSampleRate, sourceSeconds);
 
-            // AudioClip.GetData is main-thread only, so the samples come out
-            // here and everything expensive happens on the pool.
-            float[] samples = QwenTtsEngine.ClipToMono24k(reference);
+            float[] samples = sampleRate == NativeSampleRate
+                ? pcm
+                : Audio.AudioResample.Resample(pcm, sampleRate, NativeSampleRate);
             var engine = await GetEngineAsync().ConfigureAwait(false);
 
             bool icl = !string.IsNullOrWhiteSpace(referenceText);
@@ -220,9 +252,9 @@ namespace QwenTTS
                 () => engine.ExtractClonePrompt(samples, icl, cancellationToken)).ConfigureAwait(false);
 
             QwenLog.Log($"[QwenTTS] Clone prompt ready (x-vector dim={prompt.SpeakerEmbedding.Length}, " +
-                        $"ref frames={prompt.ReferenceFrames}, {reference.length:0.00}s reference)");
+                        $"ref frames={prompt.ReferenceFrames}, {sourceSeconds:0.00}s reference)");
 
-            return QwenVoice.Cloned(engine, prompt, referenceText, language, samples, reference.frequency);
+            return QwenVoice.Cloned(engine, prompt, referenceText, language, samples, sourceSampleRate);
         }
 
         /// <summary>
@@ -268,6 +300,7 @@ namespace QwenTTS
             var prompt = await BackgroundWork.Run(
                 () => engine.ExtractClonePrompt(samples, icl, cancellationToken)).ConfigureAwait(false);
             return QwenVoice.Cloned(engine, prompt, manifest.ReferenceText, manifest.Language, samples, rate);
+
         }
 
         #endregion

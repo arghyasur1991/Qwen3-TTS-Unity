@@ -25,7 +25,7 @@ namespace QwenTTS.Internal
                 if (shape.Length != 2)
                     throw new InvalidDataException($"Expected 2D array, got {shape.Length}D");
                 var buf = NativeFloatBuffer.Alloc(shape[0], shape[1]);
-                QwenTTS.Engine.IOUtil.ReadExact(fs, buf.Ptr, buf.ByteCount);
+                IOUtil.ReadExact(fs, buf.Ptr, buf.ByteCount);
                 return buf;
             }
         }
@@ -40,7 +40,7 @@ namespace QwenTTS.Internal
                 if (shape.Length != 1)
                     throw new InvalidDataException($"Expected 1D array, got {shape.Length}D");
                 var buf = NativeFloatBuffer.Alloc(shape[0], 1);
-                QwenTTS.Engine.IOUtil.ReadExact(fs, buf.Ptr, buf.ByteCount);
+                IOUtil.ReadExact(fs, buf.Ptr, buf.ByteCount);
                 return buf;
             }
         }
@@ -57,7 +57,7 @@ namespace QwenTTS.Internal
             {
                 Span<byte> magic = stackalloc byte[6];
                 byte[] expected = { 0x93, (byte)'N', (byte)'U', (byte)'M', (byte)'P', (byte)'Y' };
-                QwenTTS.Engine.IOUtil.ReadExact(fs, magic);
+                IOUtil.ReadExact(fs, magic);
                 if (!MemoryExtensions.SequenceEqual<byte>(magic, expected))
                     throw new InvalidDataException("Not a valid NPY file (bad magic)");
 
@@ -70,18 +70,18 @@ namespace QwenTTS.Internal
                 if (major == 1)
                 {
                     Span<byte> lenBytes = stackalloc byte[2];
-                    QwenTTS.Engine.IOUtil.ReadExact(fs, lenBytes);
+                    IOUtil.ReadExact(fs, lenBytes);
                     headerLen = BinaryPrimitives.ReadUInt16LittleEndian(lenBytes);
                 }
                 else
                 {
                     Span<byte> lenBytes = stackalloc byte[4];
-                    QwenTTS.Engine.IOUtil.ReadExact(fs, lenBytes);
+                    IOUtil.ReadExact(fs, lenBytes);
                     headerLen = (int)BinaryPrimitives.ReadUInt32LittleEndian(lenBytes);
                 }
 
                 var headerBytes = new byte[headerLen];
-                QwenTTS.Engine.IOUtil.ReadExact(fs, headerBytes);
+                IOUtil.ReadExact(fs, headerBytes);
                 var header = Encoding.ASCII.GetString(headerBytes).Trim();
                 var dtype = ExtractValue(header, "'descr':");
                 var shapeStr = ExtractValue(header, "'shape':");

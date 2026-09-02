@@ -111,7 +111,7 @@ namespace QwenTTS.Editor
             if (status == null)
                 return;
 
-            using var _ = new EditorGUILayout.VerticalScope(EditorStyles.helpBox);
+            using var box = new EditorGUILayout.VerticalScope(EditorStyles.helpBox);
             EditorGUILayout.LabelField(status.Checkpoint.ToString(), EditorStyles.boldLabel);
             EditorGUILayout.LabelField(blurb, EditorStyles.miniLabel);
 

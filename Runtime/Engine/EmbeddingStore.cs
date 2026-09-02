@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using QwenTTS.Internal;
 
 namespace QwenTTS.Engine
 {
@@ -25,7 +26,6 @@ namespace QwenTTS.Engine
         NativeFloatBuffer _fc2Bias;
         NativeFloatBuffer _talkerCodecEmbedding;
         readonly NativeFloatBuffer[] _cpCodecEmbeddings = new NativeFloatBuffer[CpGroupCount];
-        Dictionary<string, int> _speakerIds;
 
         NativeFloatBuffer _cpProjectionWeight;
         NativeFloatBuffer _cpProjectionBias;
@@ -81,7 +81,6 @@ namespace QwenTTS.Engine
             for (int i = 0; i < CpGroupCount; i++)
                 _cpCodecEmbeddings[i] = cpLocal[i];
 
-            _speakerIds = LoadSpeakerIds(Path.Combine(embeddingsDir, "speaker_ids.json"));
             _textHiddenSize = _textEmbedding.Cols;
             _fc1OutSize = _fc1Weight.Rows;
             _hiddenSize = _fc2Weight.Rows;
@@ -104,6 +103,13 @@ namespace QwenTTS.Engine
                         $"CP projection input mismatch: weight columns ({_cpProjectionWeight.Cols}) != hidden_size ({_hiddenSize})");
                 AllocateProjected();
             }
+        }
+
+        static ModelConfig LoadConfig(string configPath)
+        {
+            var configJson = File.ReadAllText(configPath);
+            return JsonConvert.DeserializeObject<ModelConfig>(configJson)
+                ?? throw new InvalidDataException("Failed to parse config.json");
         }
 
         void AllocateProjected()
@@ -233,28 +239,6 @@ namespace QwenTTS.Engine
                 _projectedTalkerReady[tokenId] = true;
             }
             _projectedTalkerCodecEmbedding.CopyRow(tokenId, output);
-        }
-
-        public int GetSpeakerId(string speaker)
-        {
-            if (!_speakerIds.TryGetValue(speaker, out var id))
-                throw new ArgumentException($"Unknown speaker: {speaker}");
-            return id;
-        }
-
-        public IReadOnlyCollection<string> GetAvailableSpeakers() => _speakerIds.Keys;
-
-        public float[] GetSpeakerEmbedding(int speakerId)
-        {
-            var embedding = new float[_hiddenSize];
-            _talkerCodecEmbedding.CopyRow(speakerId, embedding);
-            return embedding;
-        }
-
-        public IEnumerable<(string name, float[] embedding)> GetAllSpeakerEmbeddings()
-        {
-            foreach (var (name, id) in _speakerIds)
-                yield return (name, GetSpeakerEmbedding(id));
         }
 
         public void Dispose()

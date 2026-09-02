@@ -104,7 +104,7 @@ internal sealed class LanguageModel : IDisposable
     /// </param>
     public long[,,] GenerateWithSpeakerEmbeddingAndRefText(
         int[] tokenIds, float[] speakerEmbedding, string language,
-        int[] refTokenIds = null, long[,,] refAudioCodes = null,
+        int[] refTokenIds, long[,,] refAudioCodes,
         SamplingParams sampling,
         IProgress<SpeechProgress> progress = null,
         CancellationToken cancellationToken = default,
