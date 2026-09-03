@@ -147,31 +147,15 @@ namespace QwenTTS.Audio
             return bytes;
         }
 
-        /// <summary>Interleaved samples at any rate to mono 24 kHz.</summary>
+        /// <summary>
+        /// Interleaved samples at any rate to mono 24 kHz, the rate the model
+        /// works at. See <see cref="QwenAudio"/> for the general forms.
+        /// </summary>
         public static float[] ToMono24k(float[] interleaved, int sampleRate, int channels)
         {
             if (interleaved == null || interleaved.Length == 0)
                 return Array.Empty<float>();
-
-            float[] mono;
-            if (channels <= 1)
-            {
-                mono = interleaved;
-            }
-            else
-            {
-                int frames = interleaved.Length / channels;
-                mono = new float[frames];
-                for (int i = 0; i < frames; i++)
-                {
-                    float sum = 0f;
-                    for (int c = 0; c < channels; c++)
-                        sum += interleaved[i * channels + c];
-                    mono[i] = sum / channels;
-                }
-            }
-
-            return sampleRate == 24000 ? mono : AudioResample.Resample(mono, sampleRate, 24000);
+            return QwenAudio.Resample(QwenAudio.ToMono(interleaved, channels), sampleRate, 24000);
         }
 
         /// <summary>Decoded WAV bytes as an AudioClip at the rate the file declares.</summary>

@@ -144,6 +144,27 @@ samples are handed over. That makes concatenated chunks match a single decode
 to within about 2e-6 rather than approximately, at the cost of re-decoding —
 which is why chunk sizes double rather than staying small.
 
+## Audio helpers
+
+Generation hands back a `float[]`, and a caller usually has to assemble it —
+downmix a reference recording, match a target rate, or stitch takes together
+with a beat between them. `QwenAudio` has the pieces so every host does not
+rewrite the same downmix-and-resample loop:
+
+```csharp
+float[] mono   = QwenAudio.ToMono(interleaved, channels);
+float[] at48k  = QwenAudio.Resample(mono, 24000, 48000);
+float[] beat   = QwenAudio.Silence(24000, 0.25f);
+float[] joined = QwenAudio.Concatenate(new[] { lineOne, lineTwo }, 24000, gapSeconds: 0.3f);
+
+// AudioClip overloads too, for convenience. Main thread only.
+AudioClip clip = QwenAudio.Concatenate(clips, 24000, gapSeconds: 0.3f);
+```
+
+The `float[]` overloads are thread-agnostic and worth preferring. The
+`AudioClip` ones must run on Unity's main thread, since `Create`, `SetData` and
+`GetData` all require it.
+
 ## Precision
 
 The talker and code predictor read every weight once per generated token, so

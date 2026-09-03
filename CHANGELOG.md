@@ -40,6 +40,9 @@ package.
   fp16 is not offered, having measured far slower than fp32 on ONNX Runtime's
   CPU provider, which has no fast fp16 kernels for these operations on Apple
   silicon.
+- `QwenAudio` PCM assembly helpers: mono downmix, band-limited resample,
+  silence and gapped concatenation, with `AudioClip` overloads. `WavCodec`'s
+  24 kHz downmix is now one of them rather than its own copy.
 - Optional per-stage timing via `QwenTts.ProfilingEnabled` and
   `ProfileReport()`, off by default.
 - `QwenTtsSettings.IntraOpThreads` to override ONNX Runtime's thread count.

@@ -164,3 +164,93 @@ namespace QwenTTS.Tests
         public static float Sin(float x) => (float)Math.Sin(x);
     }
 }
+
+namespace QwenTTS.Tests
+{
+    /// <summary>
+    /// The PCM assembly helpers. Concatenation carries the defect worth
+    /// guarding: the version these replaced accepted a gap duration and then
+    /// ignored it, so clips were butt-joined however long a beat you asked for.
+    /// </summary>
+    public class QwenAudioTests
+    {
+        [Test]
+        public void ToMono_averages_channels()
+        {
+            // Two frames of stereo: (1, -1) then (0.5, 0.5).
+            var interleaved = new[] { 1f, -1f, 0.5f, 0.5f };
+            var mono = QwenAudio.ToMono(interleaved, 2);
+
+            Assert.AreEqual(2, mono.Length);
+            Assert.AreEqual(0f, mono[0], 1e-6f);
+            Assert.AreEqual(0.5f, mono[1], 1e-6f);
+        }
+
+        [Test]
+        public void ToMono_passes_mono_through_untouched()
+        {
+            var mono = new[] { 0.1f, 0.2f };
+            Assert.AreSame(mono, QwenAudio.ToMono(mono, 1));
+        }
+
+        [Test]
+        public void Resample_is_a_no_op_at_the_same_rate()
+        {
+            var pcm = new[] { 0.1f, 0.2f, 0.3f };
+            Assert.AreSame(pcm, QwenAudio.Resample(pcm, 24000, 24000));
+        }
+
+        [Test]
+        public void Resample_scales_length_by_the_rate_ratio()
+        {
+            var pcm = new float[2400];
+            var down = QwenAudio.Resample(pcm, 24000, 12000);
+            Assert.AreEqual(1200, down.Length, 2);
+        }
+
+        [Test]
+        public void Silence_is_zeroed_and_the_requested_length()
+        {
+            var pcm = QwenAudio.Silence(24000, 0.5f);
+            Assert.AreEqual(12000, pcm.Length);
+            foreach (var s in pcm)
+                Assert.AreEqual(0f, s);
+        }
+
+        [Test]
+        public void Concatenate_honours_the_gap()
+        {
+            var a = new[] { 1f, 1f };
+            var b = new[] { 1f, 1f };
+            // 1000 Hz makes the arithmetic legible: 0.01 s is 10 samples.
+            var joined = QwenAudio.Concatenate(new[] { a, b }, 1000, 0.01f);
+
+            Assert.AreEqual(2 + 10 + 2, joined.Length);
+            Assert.AreEqual(1f, joined[1]);
+            Assert.AreEqual(0f, joined[2], "gap should start right after the first segment");
+            Assert.AreEqual(0f, joined[11], "gap should run to just before the second");
+            Assert.AreEqual(1f, joined[12]);
+        }
+
+        [Test]
+        public void Concatenate_puts_no_gap_before_the_first_or_after_the_last()
+        {
+            var joined = QwenAudio.Concatenate(new[] { new[] { 1f } }, 1000, 0.5f);
+            Assert.AreEqual(1, joined.Length);
+        }
+
+        [Test]
+        public void Concatenate_skips_empty_segments_without_leaving_their_gap()
+        {
+            var joined = QwenAudio.Concatenate(
+                new[] { new[] { 1f }, null, Array.Empty<float>(), new[] { 1f } }, 1000, 0.01f);
+            Assert.AreEqual(1 + 10 + 1, joined.Length);
+        }
+
+        [Test]
+        public void Concatenate_of_nothing_is_empty_not_null()
+        {
+            Assert.AreEqual(0, QwenAudio.Concatenate(Array.Empty<float[]>(), 24000).Length);
+        }
+    }
+}
