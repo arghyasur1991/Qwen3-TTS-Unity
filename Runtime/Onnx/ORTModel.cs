@@ -370,6 +370,41 @@ namespace QwenTTS.Onnx
         }
 
         /// <summary>
+        /// Releases the ONNX Runtime environment and the logging buffer that
+        /// belongs to it, leaving both re-creatable.
+        ///
+        /// Only the editor needs this, and only because a domain reload
+        /// destroys the managed wrappers without releasing the native objects
+        /// behind them: the environment and the unmanaged buffer its sink reads
+        /// would both be orphaned once per reload. <c>OrtEnv</c> is a
+        /// <c>SafeHandle</c> whose release resets the singleton, so the next
+        /// domain gets a fresh environment with a valid sink.
+        ///
+        /// **Dispose sessions first.** A live session holds the environment's
+        /// logger; releasing the environment underneath one is undefined.
+        /// </summary>
+        internal static void ReleaseEnvironment()
+        {
+            try
+            {
+                if (OrtEnv.IsCreated)
+                    OrtEnv.Instance().Dispose();
+            }
+            catch (Exception e)
+            {
+                QwenLog.LogWarning("[ORTModel] Releasing the ONNX environment: " + e.Message);
+            }
+
+            // After the environment, never before: the sink dereferences this.
+            if (_loggingParam != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_loggingParam);
+                _loggingParam = IntPtr.Zero;
+            }
+            _loggingInitialized = false;
+        }
+
+        /// <summary>
         /// Creates the ONNX Runtime environment and routes its diagnostics into
         /// Unity.
         ///

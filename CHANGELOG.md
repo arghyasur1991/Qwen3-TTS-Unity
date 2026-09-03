@@ -74,6 +74,10 @@ package.
   Runtime allows one environment per process, the library that creates it owns
   the sink; `QwenTts.SetOnnxLogContext` lets another library attribute its own
   models to it.
+- ONNX Runtime is released deterministically before a domain reload — sessions,
+  then the environment, then the logging buffer — so a script compile does not
+  orphan multi-gigabyte native allocations. Editor memory with both checkpoints
+  warm drops by about 3 GB across a reload instead of being kept and leaked.
 
 ### Tools
 
