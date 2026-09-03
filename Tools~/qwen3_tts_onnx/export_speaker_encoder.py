@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export Base speaker_encoder.onnx.
 
-I/O matches Spark C# QwenSpeakerEncoderModel:
+I/O matches the C# QwenSpeakerEncoderModel:
   mels (1, T, 128) float32 → speaker_embedding (1, enc_dim) float32
 
 VoiceDesign has no encoder (tts_model_type != base). Skip there.

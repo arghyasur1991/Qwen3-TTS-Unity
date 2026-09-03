@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""Export Qwen3-TTS 1.7B PyTorch to the ElBruno ONNX layout Spark C# loads.
+"""Export a Qwen3-TTS 1.7B checkpoint to the ONNX layout this package loads.
 
 Loads the HuggingFace checkpoint once, then writes:
 
-  talker.onnx[.data]          (both phases; zero-length past = prefill)
-  code_predictor.onnx[.data]     # 1024-dim inputs; projection is npy
+  talker.onnx[.data]             both phases; a zero-length past is a prefill
+  code_predictor.onnx[.data]     1024-dim inputs; the projection ships as .npy
   vocoder.onnx[.data]
-  embeddings/*.npy + nested config.json + empty speaker_ids.json
-  tokenizer/vocab.json + merges.txt
-  speaker_encoder.onnx[.data]    # Base only
-  tokenizer_encoder.onnx[.data]  # Base ICL (12 Hz codec encode)
+  embeddings/*.npy               tables the C# reads directly, plus config.json
+  tokenizer/                     vocab.json and merges.txt
+  speaker_encoder.onnx[.data]    Base only
+  tokenizer_encoder.onnx[.data]  Base only, for in-context cloning
 
-Output is NOT committed. Defaults are VoiceDesign. Base:
+Defaults to the VoiceDesign checkpoint. For Base:
 
-  HF_HUB_DISABLE_XET=1 conda run -n sparktts python tools/qwen3_tts_onnx/export_all.py \\
+  HF_HUB_DISABLE_XET=1 python export_all.py \\
     --model-id Qwen/Qwen3-TTS-12Hz-1.7B-Base \\
-    --output-dir ~/Downloads/Qwen3-TTS-ONNX/Qwen3-1.7B-Base
+    --output-dir <dest>/Qwen3-1.7B-Base
 
-Move any zukky single-file talker_*.onnx out of the dest first. Those
-~5 GB protobufs cannot be converted in place (onnx.load hits the 2 GB
-limit). Do not use HuggingFace xet for the safetensors download.
+`HF_HUB_DISABLE_XET=1` is not optional: xet has hung on the 3.6 GB
+safetensors download and left a corrupt header.
 
-Reference: ElBruno CustomVoice I/O dump, local Spark-TTS export_sparktts_onnx.py
-(external-data + opset), wavekat TalkerPrefill/Decode wrappers + mask_patch.
+Export into an empty destination. A pre-built single-file talker of several
+GB cannot be converted in place, because `onnx.load` cannot read a protobuf
+past 2 GB.
 """
 
 from __future__ import annotations
@@ -69,8 +69,8 @@ def main():
         if os.path.isfile(path) and os.path.getsize(path) > 100_000_000:
             raise SystemExit(
                 f"{path} is {os.path.getsize(path) / 1e9:.1f} GB (single-file protobuf). "
-                "Move the zukky folder aside, then export into an empty dest. "
-                "onnx.load cannot convert those files in place."
+                "Export into an empty destination: onnx.load cannot convert a "
+                "protobuf this size in place."
             )
 
     print(f"Loading {args.model_id} (fp32 eager) ...")

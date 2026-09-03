@@ -32,7 +32,7 @@ namespace QwenTTS
         public const int NativeSampleRate = QwenTtsEngine.NativeSampleRate;
 
         /// <summary>
-        /// Below this a reference carries too few 12 Hz frames to pin a
+        /// Below this a reference carries too few codec frames to pin a
         /// speaker, and clones of it vary noticeably between utterances.
         /// </summary>
         public const float MinRecommendedReferenceSeconds = 4f;

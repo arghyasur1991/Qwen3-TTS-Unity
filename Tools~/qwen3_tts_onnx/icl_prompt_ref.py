@@ -6,9 +6,8 @@ using the same npy tables the Unity engine reads, so the C# prompt can be
 compared number for number. Prompt geometry cannot be judged by listening —
 a wrong-but-plausible prompt just makes the clone drift.
 
-    conda activate sparktts
     python tools/qwen3_tts_onnx/icl_prompt_ref.py \
-        --ref-wav PocketHamletUnity/Assets/Game/Audio/Dialogue/friend_design_ref.wav \
+        --ref-wav reference.wav \
         --ref-text "The scanner sees your ceiling as their sky." \
         --text "I am good. What about you?"
 
@@ -64,7 +63,7 @@ def text_proj(tables, ids):
 
 
 def resample(x, src_rate, dst_rate, lobes=16):
-    """Port of SparkTTS AudioResample so both sides see identical samples.
+    """Mirrors the C# AudioResample so both sides see identical samples.
 
     librosa.resample would be close but not equal, and the reference codes are
     sensitive enough that the prompt checksums would drift.
@@ -107,7 +106,7 @@ def load_mono_24k(wav_path):
 
 
 def encode_reference(model_dir, wav_path):
-    """12 Hz codes via the same traced graph the C# uses (fixed 20 s window)."""
+    """Codec frames via the same traced graph the C# uses (fixed 20 s window)."""
     audio, _ = load_mono_24k(wav_path)
     keep = min(len(audio), GRAPH_SAMPLES) // SAMPLES_PER_FRAME
     padded = np.zeros(GRAPH_SAMPLES, dtype=np.float32)

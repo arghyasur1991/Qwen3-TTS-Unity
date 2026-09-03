@@ -1,56 +1,48 @@
 # Qwen3-TTS for Unity
 
-On-device text-to-speech using the **Qwen3-TTS 12 Hz 1.7B** checkpoints through
-ONNX Runtime. Two capabilities, each a separate model:
+On-device text-to-speech using the **Qwen3-TTS 12.5 Hz 1.7B** checkpoints
+through ONNX Runtime. Two capabilities, each a separate checkpoint:
 
 | Checkpoint | What it does |
 |---|---|
-| **VoiceDesign** | Invents a speaker from a natural-language instruct. A different person every generate. |
-| **Base** | Clones a speaker from a reference recording, using Qwen's in-context path (reference codes + transcript + x-vector). |
+| **VoiceDesign** | Invents a speaker from a natural-language description. A different person every generate. |
+| **Base** | Clones a speaker from a reference recording, using Qwen's in-context path (reference codes + transcript + speaker embedding). |
 
-The usual flow is both: design until you like a take, then clone that take so it
-stays put.
+The usual flow is both: design until you like a take, then clone that take so
+the voice stays put.
 
-This package **does not include or download weights.** Export them yourself with
-`Tools~/qwen3_tts_onnx/export_all.py` and point the package at the result.
-
----
+This package **does not include or download weights.** Export them yourself
+with the scripts in `Tools~/qwen3_tts_onnx/` and point the package at the
+result.
 
 ## Read this first: it is not a small model
 
-Measured on an Apple-silicon Mac, CPU execution provider, FP32:
+Measured on an Apple-silicon laptop, CPU execution provider, fp32:
 
 | | Per checkpoint |
 |---|---|
-| Disk | ~8 GB (plus ~138 MB of baked projection tables) |
-| Resident when loaded | ~7.0 GB (5.4 GB of ONNX sessions + ~1.5 GB embedding tables) |
-| Cold session open | ~11 s (~3 s with a warm page cache) |
-| Generation speed | ~0.97x of real time (finishes just ahead of playback) |
+| Disk | ~8 GB |
+| Resident once loaded | ~7 GB (5.4 GB of ONNX sessions, ~1.5 GB of embedding tables) |
+| Cold session open | ~11 s, ~3 s with a warm page cache |
+| Generation | ~0.97× of real time — finishes just ahead of playback |
 
-ONNX Runtime does **not** keep the external `.onnx.data` lazily mapped — resident
+ONNX Runtime does **not** keep external `.onnx.data` lazily mapped, so resident
 memory tracks file size roughly 1:1. Budget accordingly:
 
 - **One checkpoint resident:** 16 GB machine is fine, 32 GB comfortable.
-- **Both resident:** wants 32 GB. Usually avoidable — see *Residency* below.
+- **Both resident:** wants 32 GB, and is usually avoidable — see
+  [Residency](#residency).
+- **Mobile and XR are out of scope** at fp32. The package compiles anywhere,
+  but these weights do not fit in a phone or headset app.
 
-The talker is exported as a single graph that does both prefill and decode
-(a zero-length KV cache makes it a prefill). Exports predating that carry a
-`talker_prefill` + `talker_decode` pair, which is the same weights twice and
-doubles both figures above; they are still read, but re-exporting with
-`Tools~/qwen3_tts_onnx/export_talker_unified.py` halves the cost.
-- **Mobile and XR are out of scope** at FP32. The package compiles everywhere,
-  but 13 GB of weights does not fit in a phone or headset app.
-
-Supported and tested: Unity 6000.x editor, Windows and macOS standalone.
+Developed against Unity 6000.x, Windows and macOS.
 
 ## Install
 
-1. Export a checkpoint (see `Tools~/qwen3_tts_onnx/`). You need one folder per
-   checkpoint, named:
-   - `Qwen3-1.7B-VoiceDesign`
-   - `Qwen3-1.7B-Base`
-2. Put those folders under a root of your choosing.
-3. Point the package at the root and check what it found:
+1. Export both checkpoints (see `Tools~/qwen3_tts_onnx/README.md`). You get one
+   folder each, named `Qwen3-1.7B-VoiceDesign` and `Qwen3-1.7B-Base`.
+2. Put them under a root of your choosing.
+3. Point the package at that root and check what it found:
 
 ```csharp
 QwenTts.Initialize(new QwenTtsSettings
@@ -65,11 +57,11 @@ Debug.Log(status);   // installed / loaded / missing files / bytes
 ```
 
 `ModelRoot` defaults to `StreamingAssets/QwenTTS`, which is convenient in the
-editor and usually wrong for a shipped player — StreamingAssets is copied into
-the build. Prefer a folder you install or download into.
+editor and usually wrong for a shipped player, because StreamingAssets is
+copied into the build. Prefer a folder you install or download into.
 
-`Pocket Hamlet` style hosts can also use **Window → Qwen3 TTS → Model Status** to
-see the same information without writing code.
+**Window → Qwen3 TTS → Model Status** shows the same information without
+writing code.
 
 ## Designing a voice
 
@@ -82,9 +74,9 @@ audioSource.clip = take.ToAudioClip();     // main thread
 audioSource.Play();
 ```
 
-The instruct *is* the voice. Calling `SpeakAsync` again gives you the same style
-in a different person's mouth — that is what the checkpoint does. There is no
-seed that pins it.
+The description *is* the voice. Calling `SpeakAsync` again gives you the same
+style in a different person's mouth — that is what the checkpoint does, and
+there is no seed that pins it. To keep a voice, clone it.
 
 ## Keeping a voice: clone the take
 
@@ -94,7 +86,7 @@ var line  = "I am Alex. I am your friend, and a really brilliant scientist.";
 var take  = await voice.SpeakAsync(line);
 
 // The transcript is required: it is what makes this in-context cloning
-// rather than a generic x-vector match.
+// rather than a generic speaker-embedding match.
 var locked = await QwenTts.CreateClonedVoiceAsync(take.ToAudioClip(), line);
 
 var next = await locked.SpeakAsync("Careful with that.");
@@ -102,14 +94,26 @@ var next = await locked.SpeakAsync("Careful with that.");
 
 Reference audio quality decides clone quality:
 
-- **At least 4 seconds.** Shorter and there are too few 12 Hz frames to pin a
-  speaker; takes drift between utterances. The package warns below this.
-- **Keep it at 24 kHz.** The speaker encoder reads mel up to 12 kHz, so a 16 kHz
-  reference has the top of the identifying band already missing. `SpeakAsync`
-  returns 24 kHz unless you ask for something else. The package warns if a
-  reference is lower.
+- **At least 4 seconds.** Shorter and there are too few frames to pin a
+  speaker, so takes drift between utterances. The package warns below this.
+- **Keep it at 24 kHz.** The speaker encoder reads mel up to 12 kHz, so a
+  16 kHz reference has the top of the identifying band already missing.
+  `SpeakAsync` returns 24 kHz unless you ask for something else, and the
+  package warns if a reference is lower.
 - **Pass the exact transcript.** Without it you get a stable voice that is not
   the one in your recording.
+
+## Saving and reloading
+
+```csharp
+await locked.SaveAsync(folder, take);              // take is optional
+var again = await QwenTts.LoadVoiceAsync(folder);
+```
+
+A saved clone stores its derived prompt — speaker embedding plus reference
+codes — beside the reference audio, so reloading is a file read rather than
+another speaker-encoder and tokenizer-encoder run. A prompt file from an
+incompatible export is ignored and the prompt is re-derived.
 
 ## Streaming
 
@@ -119,7 +123,7 @@ the line is finished.
 ```csharp
 var player = new Progress<SpeechChunk>(chunk =>
 {
-    // Reported from a worker thread. Marshal before touching an AudioClip.
+    // Reported from a worker thread; marshal before touching an AudioClip.
     // chunk.Pcm holds only samples not reported before, so appending each
     // chunk in order reproduces the utterance.
     Enqueue(chunk.Pcm, chunk.SampleRate);
@@ -129,36 +133,23 @@ var player = new Progress<SpeechChunk>(chunk =>
 var whole = await voice.SpeakStreamAsync("Careful with that.", player);
 ```
 
-First audio arrives in roughly a second instead of at the end. Tune with
-`SpeechOptions.FirstChunkFrames` (default 6, about half a second) and
+First audio arrives in about a second rather than at the end. Tune with
+`SpeechOptions.FirstChunkFrames` (default 6, roughly half a second) and
 `MaxChunkFrames` (48).
 
-The chunks are not decoded independently. This codec decoder's output depends
-on its whole input rather than a bounded window — giving a chunk 24 frames of
-preceding context still leaves errors of 0.59 on a signal in [-1, 1] — so
-overlap-and-trim does not apply. Instead the prefix is re-decoded each time
-and only new samples are handed over, which is exact rather than approximate:
-concatenated chunks match a single decode to about 1.9e-6. The price is
-re-decoding, so chunk sizes double rather than staying small, keeping total
-decode work near twice a single pass.
-
-## Saving and reloading
-
-```csharp
-await locked.SaveAsync(folder, take);              // take is optional
-var again = await QwenTts.LoadVoiceAsync(folder);
-```
-
-A saved clone stores the derived prompt (x-vector plus reference codes) next to
-the reference audio, so reloading is a file read rather than another
-speaker-encoder and tokenizer-encoder run. If the prompt file is from an older
-export it is ignored and the prompt is re-derived from the reference.
+Chunks are not decoded independently. This codec decoder's output depends on
+its whole input rather than a bounded window, so overlap-and-trim does not
+apply here; instead the prefix is re-decoded for each chunk and only new
+samples are handed over. That makes concatenated chunks match a single decode
+to within about 2e-6 rather than approximately, at the cost of re-decoding —
+which is why chunk sizes double rather than staying small.
 
 ## Precision
 
 The talker and code predictor read every weight once per generated token, so
 they are limited by memory bandwidth rather than arithmetic. int8 weights cut
-that traffic and are ~1.4x faster end to end:
+that traffic and are about 1.4× faster end to end, with the talker resident at
+2.35 GB instead of 5.67:
 
 ```csharp
 QwenTts.Initialize(new QwenTtsSettings
@@ -169,51 +160,45 @@ QwenTts.Initialize(new QwenTtsSettings
 ```
 
 Produce the quantized graphs with `Tools~/qwen3_tts_onnx/quantize_int8.py`.
-Resolution is per graph, so a checkpoint missing `talker_int8.onnx` quietly
-uses the fp32 talker rather than failing.
+Precision is resolved per graph, so a checkpoint missing `talker_int8.onnx`
+uses the fp32 talker rather than failing. Both checkpoints quantize, and clones
+gain slightly more than designed voices (1.55× against 1.40×) because their
+in-context prefill puts more of the work in the talker. The vocoder and the
+speaker and tokenizer encoders stay fp32, so nothing about how a voice is
+*captured* is quantized.
 
-Both checkpoints quantize, so designed voices and clones both benefit — clones
-slightly more (1.55x against 1.40x), because their in-context prefill puts a
-greater share of the work in the talker. Only the talker and code predictor are
-quantized: the vocoder, and on the cloning checkpoint the speaker encoder and
-tokenizer encoder, stay fp32, so nothing about how a voice is *captured* is
-touched. Scored over a five-line corpus, cloned int8 matches cloned fp32 exactly
-(mean WER 0.017 either way).
+It is opt-in because it is not free. Quantized audio is not bit-identical to
+fp32 and a voice can differ subtly, so listen before shipping it. Judge it by
+transcribing the output rather than by numerical error: quantizing every layer
+passes every numerical check and still drops phonemes, which is why
+`quantize_int8.py` holds the output projection and the outermost decoder layers
+back by default.
 
-It is opt-in because it is not free. Quantizing every layer looked fine on
-every numerical check — argmax agreed, the audio was the right length — and a
-Whisper transcript of it read "The **Saner** sees your ceiling", a dropped
-phoneme. The script therefore holds the output projection and the first and
-last three decoder layers in fp32, which halves the logit error and restores
-an exact transcript for a little of the speedup. Even then the audio is not
-bit-identical to fp32 and a voice can differ subtly, so listen before shipping
-it.
-
-fp16 is deliberately not offered: ONNX Runtime's CPU provider has no fast fp16
-kernels for these ops on Apple silicon and measured **17x slower** while being
-numerically near-perfect.
+fp16 is deliberately not offered. ONNX Runtime's CPU provider has no fast fp16
+kernels for these operations on Apple silicon, so it casts and computes
+element-wise: measurably slower than fp32 while being numerically near-perfect.
 
 ## Residency
 
-Each checkpoint is ~13 GB, and the two are normally needed in *different phases*
-— VoiceDesign while the player is picking a voice, Base for everything after. So
-load and drop them explicitly instead of holding both:
+The two checkpoints are normally needed in *different phases* — VoiceDesign
+while the player is picking a voice, Base for everything after — so load and
+drop them explicitly instead of holding both:
 
 ```csharp
 await QwenTts.WarmUpAsync(QwenCheckpoint.VoiceDesign);   // loading screen
 // ... player auditions voices, picks one, you clone it ...
-QwenTts.Evict(QwenCheckpoint.VoiceDesign);               // ~13 GB back
+QwenTts.Evict(QwenCheckpoint.VoiceDesign);               // ~7 GB back
 await QwenTts.WarmUpAsync(QwenCheckpoint.Base);
 ```
 
 `WarmUpAsync` matters: without it the first utterance pays the whole session
-open (~21 s cold). `MemoryUsage` controls the default policy:
+open. `MemoryUsage` sets the default policy:
 
 | Mode | Behaviour |
 |---|---|
 | `Performance` | Load eagerly, never drop. |
-| `Balanced` | Load on first use, keep. Default. |
-| `Optimal` | Load per use, dispose after. Idle stays near the embedding tables (~1.5 GB) at the cost of reopening per utterance. |
+| `Balanced` | Load on first use, then keep. Default. |
+| `Optimal` | Load per use and dispose after. Idle stays near the embedding tables (~1.5 GB), at the cost of reopening per utterance. |
 
 ## Generation options
 
@@ -223,14 +208,22 @@ await voice.SpeakAsync(text, new SpeechOptions
     Language   = QwenLanguages.Default,   // 10 languages, or QwenLanguages.Auto
     SampleRate = 24000,                   // 0 keeps native
     Temperature = 0.9f, TopK = 50, TopP = 1f, RepetitionPenalty = 1.05f,
-    MaxNewTokens = 2048,                  // 12 Hz frames; 2048 is ~2.7 minutes
+    MaxNewTokens = 2048,                  // frames at 12.5 Hz; 2048 is ~2.7 minutes
 },
 progress: new Progress<SpeechProgress>(p => Debug.Log($"{p.Seconds:0.0}s")),
 cancellationToken: token);
 ```
 
-Defaults match Qwen's own generate config. Generation is ~4x slower than real
-time, so pass a `CancellationToken` for anything the player can skip.
+Defaults match Qwen's own generate config. Two settings are worth knowing about
+even if you never change them:
+
+- **`RepetitionPenalty` above 1 is load-bearing.** Greedy decoding with the
+  penalty disabled can loop without ever emitting end-of-speech.
+- **`MaxNewTokens` bounds cost, not just length.** The per-step KV cache copy
+  grows with the square of sequence length, so it is negligible for an
+  utterance and expensive for a runaway one.
+
+Pass a `CancellationToken` for anything the player can skip.
 
 ## Threading
 
@@ -238,24 +231,24 @@ time, so pass a `CancellationToken` for anything the player can skip.
 pool and are safe to await from the main thread. `AudioClip.GetData` and
 `AudioClip.Create` are Unity main-thread APIs, so a reference clip is read on
 the calling thread and `SpeechResult.ToAudioClip()` must be called on the main
-thread — that is why generation returns PCM rather than a clip.
+thread — which is why generation returns PCM rather than a clip.
 
-The two checkpoints have independent locks, so a designed and a cloned voice can
-generate at the same time. Two utterances on the *same* checkpoint serialise,
-because the talker reuses its KV and sampler buffers.
+The two checkpoints have independent locks, so a designed and a cloned voice
+can generate at the same time. Two utterances on the *same* checkpoint
+serialise, because the talker reuses its KV and sampler buffers.
 
 ## Editor: holding models across a script compile
 
-A domain reload would otherwise throw away ~22 s of session loading on every
+A domain reload would otherwise throw away every session open, on every
 compile. `QwenTTS.Editor` can detach the native ONNX allocations before the
 reload and reattach them after. It is opt-in, does nothing unless the host asks
-for it, and degrades to a normal reload if a future ONNX Runtime moves the
+for it, and falls back to a normal reload if a future ONNX Runtime moves the
 private members it relies on.
 
 ## Licence and attribution
 
 Apache-2.0. The ONNX inference path derives from
-[ElBruno.QwenTTS](https://github.com/elbruno/ElBruno.QwenTTS) (MIT), and the
-prompt construction follows Alibaba's `qwen-tts` reference implementation
+[ElBruno.QwenTTS](https://github.com/elbruno/ElBruno.QwenTTS) (MIT), and prompt
+construction follows Alibaba's `qwen-tts` reference implementation
 (Apache-2.0). Model weights are Alibaba's, under their own licence. See
 `THIRD_PARTY_NOTICES.md`.

@@ -102,7 +102,7 @@ namespace QwenTTS
         /// <see cref="SpeechResult.ToAudioClip"/>.
         /// </summary>
         /// <param name="options">Language, sampling and output rate. Null uses defaults.</param>
-        /// <param name="progress">Reports 12 Hz frames as they are generated.</param>
+        /// <param name="progress">Reports codec frames as they are generated.</param>
         public Task<SpeechResult> SpeakAsync(string text, SpeechOptions options = null,
             IProgress<SpeechProgress> progress = null, CancellationToken cancellationToken = default)
             => SpeakInternalAsync(text, options, null, progress, cancellationToken);

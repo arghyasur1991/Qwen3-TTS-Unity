@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Dump VoiceDesign embedding tables + ElBruno-shaped nested config.json.
+"""Dump the embedding tables the C# reads directly, plus a nested config.json.
 
-Spark C# EmbeddingStore reads nested talker / code_predictor / tts / language_ids,
+EmbeddingStore reads nested talker / code_predictor / tts / language_ids,
 plus cp_projection_*.npy (small_to_mtp) and an empty speaker_ids.json.
 """
 
@@ -51,7 +51,7 @@ def export_embeddings(model, output_dir: str, model_id: str) -> None:
     num_cp_groups = cp_config.num_code_groups - 1
     for i in range(num_cp_groups):
         arr = cp_embeddings[i].weight.detach().cpu().numpy()
-        # ElBruno / Spark C# project 2048→1024. A 1024-col table would
+        # The C# projects 2048->1024. A 1024-column table would
         # OOB in ProjectRow (weight cols == talker hidden). Pad if needed.
         if arr.shape[1] < talker_hidden:
             padded = np.zeros((arr.shape[0], talker_hidden), dtype=arr.dtype)
@@ -123,7 +123,7 @@ def export_embeddings(model, output_dir: str, model_id: str) -> None:
     }
     with open(os.path.join(embed_dir, "config.json"), "w") as f:
         json.dump(nested, f, indent=2, ensure_ascii=False)
-    print(" embeddings/config.json written (nested ElBruno shape)")
+    print(" embeddings/config.json written")
 
     with open(os.path.join(embed_dir, "speaker_ids.json"), "w") as f:
         json.dump({}, f)

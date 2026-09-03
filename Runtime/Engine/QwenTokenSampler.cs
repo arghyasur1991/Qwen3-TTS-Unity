@@ -1,5 +1,6 @@
-// Token sampling shared by CustomVoice and Base talkers.
-// Heap top-k + reused buffers follow Spark LLMModel; ThreadLocal RNG avoids per-step Random().
+// Token sampling for both talkers. A heap for top-k and reused buffers keep the
+// per-step allocation out of the decode loop; a ThreadLocal RNG avoids
+// constructing Random() per step.
 
 using System;
 using System.Collections.Generic;

@@ -8,8 +8,8 @@ using QwenTTS.Onnx;
 namespace QwenTTS.Engine
 {
     /// <summary>
-    /// 12 Hz codec vocoder. Style and Base both use vocoder.onnx with
-    /// codes (1, 16, T) after our ElBruno export.
+    /// The codec decoder: 16 code groups per frame in, 24 kHz waveform out at
+    /// 1920 samples per frame. Both checkpoints use the same graph.
     /// </summary>
     internal sealed class QwenVocoderModel : QwenOnnxModel
     {
@@ -82,8 +82,8 @@ namespace QwenTTS.Engine
                 QwenTTS.Internal.GenerationProfiler.Vocoder);
             using var results = Run(feeds);
             var wav = CopyFloat(results[0]);
-            // Flat buffer is the waveform. Do not use Dimensions[1] — CustomVoice
-            // vocoder is [batch, 1, samples]; that dim is channels, not time.
+            // The flat buffer is the waveform. Do not read Dimensions[1]: the
+            // output is [batch, 1, samples], so that axis is channels, not time.
             int wavLen = wav.Length;
 
             int target = timesteps * SamplesPerFrame;

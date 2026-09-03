@@ -145,7 +145,7 @@ namespace QwenTTS.Engine
 
             if (checkpoint == QwenCheckpoint.Base)
             {
-                // Clone needs the x-vector encoder and the 12 Hz tokenizer.
+                // Clone needs the speaker encoder and the codec tokenizer.
                 files.Add(GraphSpeakerEncoder + ".onnx");
                 files.Add(GraphSpeakerEncoder + ".onnx.data");
                 files.Add(GraphTokenizerEncoder + ".onnx");

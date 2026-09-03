@@ -97,7 +97,7 @@ namespace QwenTTS
         public float TopP = 1f;
         public float RepetitionPenalty = 1.05f;
 
-        /// <summary>Cap on generated 12 Hz frames. 2048 frames is ~2.7 minutes.</summary>
+        /// <summary>Cap on generated frames. 2048 frames is ~2.7 minutes.</summary>
         public int MaxNewTokens = 2048;
 
         // The code predictor ("sub-talker") samples the 15 residual codebooks.
@@ -208,7 +208,7 @@ namespace QwenTTS
         }
     }
 
-    /// <summary>Progress of the autoregressive loop, in 12 Hz frames.</summary>
+    /// <summary>Progress of the autoregressive loop, in codec frames.</summary>
     public readonly struct SpeechProgress
     {
         /// <summary>Frames generated so far. Each is 80 ms of audio.</summary>
@@ -271,7 +271,7 @@ namespace QwenTTS
             (Installed ? "" : $" missing {MissingFiles.Count} file(s)");
     }
 
-    /// <summary>Languages the 12 Hz checkpoints accept.</summary>
+    /// <summary>Languages the checkpoints accept.</summary>
     public static class QwenLanguages
     {
         public const string Auto = "auto";

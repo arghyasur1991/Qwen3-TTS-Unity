@@ -3,14 +3,14 @@ using System;
 namespace QwenTTS.Audio
 {
     /// <summary>
-    /// Band-limited resampler (windowed sinc). The Qwen vocoder is 24 kHz and
-    /// <see cref="SparkTTS.CharacterVoice.GenerateSpeechAsync"/> hands callers
-    /// whatever rate they ask for.
+    /// Band-limited resampler (windowed sinc). The vocoder produces 24 kHz and
+    /// callers may ask for any rate.
     ///
     /// Linear interpolation is not good enough here: downsampling without a
     /// low-pass folds 8-12 kHz back into the speech band, and upsampling a
     /// clone reference leaves a stair-stepped spectrum. Either one moves the
-    /// speaker-encoder mel and the 12 Hz codes away from the take being cloned.
+    /// speaker-encoder mel and the codec frames away from the take being
+    /// cloned.
     /// </summary>
     internal static class AudioResample
     {

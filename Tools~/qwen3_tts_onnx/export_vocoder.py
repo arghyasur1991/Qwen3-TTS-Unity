@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export VoiceDesign speech-tokenizer decoder as vocoder.onnx.
 
-I/O matches ElBruno / Spark QwenVocoderModel.CustomVoice:
+I/O matches the C# QwenVocoderModel:
   codes (1, 16, T) int64 → waveform (1, 1, N) float32
 """
 

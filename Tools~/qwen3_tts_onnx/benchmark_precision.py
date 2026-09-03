@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Is fp16 actually faster on the CPU execution provider?
+"""Compare fp32, fp16 and int8 for one graph on the current ONNX Runtime build.
+
+Answers whether a precision is worth using *here*, since that depends on the
+provider and the hardware rather than on the format. Re-run it if you change
+ONNX Runtime version, execution provider or machine.
 
 Batch-1 autoregressive decode reads every weight once per token, so the talker
 is bound by how fast its 5.27 GiB can be streamed from memory (measured
@@ -9,25 +13,19 @@ native fp16 kernels for these ops on this hardware. If it does not, it inserts
 Cast nodes, computes in fp32 anyway, and fp16 ends up slower while still
 halving disk. That is the question, and it is not answerable from the docs.
 
-Converts with `keep_io_types=True` on purpose: inputs and outputs stay fp32, so
-the C# side needs no new buffer types and this can be a drop-in file swap. The
-KV cache is a large fp32 in/out tensor under that setting, so its casts are part
-of what gets measured.
+fp16 conversion uses `keep_io_types=True`, so inputs and outputs stay fp32 and
+only the weights change. That makes it a drop-in file swap for the C#, and it
+means the KV cache casts are part of what gets measured.
 
-Unity ships ONNX Runtime 1.21.0 and this environment has 1.21.0, so the timing
-here transfers.
+Match the ONNX Runtime version here to the one Unity ships, or the timings do
+not transfer.
 
-Defaults to the **code predictor** rather than the talker. It is 0.41 GB
-against 5.27 GB, converts in seconds, and is itself 41% of synthesis wall
-clock — and the question being asked is about ONNX Runtime's fp16 kernels on
-this hardware, which one graph answers as well as another. Converting the
-talker needs the fp32 graph, an fp16 copy and a protobuf serialisation live at
-once; both the in-memory and the model-path entry points got the process killed
-on a 64 GB machine, so prove the principle on the small graph first.
+Defaults to the code predictor rather than the talker: it is an order of
+magnitude smaller, converts in seconds, and answers the question about the
+provider's kernels just as well.
 
-    conda activate sparktts
-    python fp16_spike.py --model-dir ~/Downloads/Qwen3-TTS-ONNX/Qwen3-1.7B-VoiceDesign
-    python fp16_spike.py --model-dir ... --graph talker    # once it is worth it
+    python benchmark_precision.py --model-dir <dest>/Qwen3-1.7B-VoiceDesign --int8
+    python benchmark_precision.py --model-dir <dest>/Qwen3-1.7B-Base --graph talker --int8
 """
 
 from __future__ import annotations

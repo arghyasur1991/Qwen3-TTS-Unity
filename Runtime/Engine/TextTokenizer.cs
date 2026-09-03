@@ -114,7 +114,7 @@ namespace QwenTTS.Engine
             return Encode(instructWrapped);
         }
 
-        public int[] BuildCustomVoicePrompt(string text, string speaker, string language, string instruct = null)
+        public int[] BuildClonePrompt(string text, string speaker, string language, string instruct = null)
         {
             var tokens = new List<int>();
             tokens.AddRange(BuildInstructTokens(instruct));

@@ -1,6 +1,6 @@
 # Qwen3-TTS → ONNX exporter
 
-Turns a HuggingFace Qwen3-TTS 12 Hz checkpoint into the folder layout the
+Turns a HuggingFace Qwen3-TTS checkpoint into the folder layout the
 `Qwen3-TTS-Unity` package reads. Nothing here runs inside Unity.
 
 ## Environment
@@ -8,13 +8,12 @@ Turns a HuggingFace Qwen3-TTS 12 Hz checkpoint into the folder layout the
 Needs the `qwen_tts` reference package, which is not on PyPI — these scripts
 import its model classes directly to trace them.
 
-```bash
-conda activate sparktts          # torch, transformers>=4.57, onnx,
-                                 # onnxruntime, numpy, soundfile, qwen_tts
+```
+torch, transformers>=4.57, onnx, onnxruntime, numpy, soundfile, qwen_tts
 ```
 
-Set `HF_HUB_DISABLE_XET=1` when downloading weights. Xet hung on
-VoiceDesign's 3.6 GB `model.safetensors` and left a corrupt header; plain
+Set `HF_HUB_DISABLE_XET=1` when downloading weights. Xet has hung on the
+3.6 GB `model.safetensors` and left a corrupt header; plain
 `huggingface-cli download` works.
 
 ## Exporting a checkpoint
@@ -54,7 +53,7 @@ tokenizer/                    HF tokenizer files
 | `export_all.py` | Orchestrator. Loads the checkpoint once, runs every stage. |
 | `export_talker.py` | The 1.7B talker, one graph for prefill and decode. Self-checks all three shapes against torch and refuses to ship a mismatch. |
 | `export_code_predictor.py` | Per-frame residual code predictor (15 groups). |
-| `export_vocoder.py` | 12 Hz codec decoder, variable frame count. |
+| `export_vocoder.py` | Codec decoder, variable frame count. |
 | `export_speaker_encoder.py` | Mel → x-vector. |
 | `export_tokenizer_encoder.py` | Reference waveform → codec codes. |
 | `export_embeddings.py` | Dumps embedding / projection tables as `.npy`. |
@@ -62,7 +61,7 @@ tokenizer/                    HF tokenizer files
 | `_onnx_util.py` | Collapses an export to one `.onnx` + one `.onnx.data`. |
 | `bake_projected_tables.py` | Pre-applies the code-predictor projection to the codec embedding tables (~138 MB). Called by `export_embeddings.py`, and runnable against an existing export without reloading the checkpoint. |
 | `quantize_int8.py` | int8 weights for the talker and code predictor, holding the output projection and outermost decoder layers in fp32. Optional; the engine uses them only when asked. |
-| `fp16_spike.py` | Measures whether fp16 / int8 are faster on a given ONNX Runtime build. They are not, for fp16 on the CPU provider — see below. |
+| `benchmark_precision.py` | Times fp32 against fp16 and int8 for one graph on your ONNX Runtime build, and reports how far the logits moved. |
 
 ## Reference implementations (debugging, not export)
 
@@ -94,7 +93,7 @@ python icl_prompt_ref.py --ref-wav <ref>.wav --ref-text "..." --text "..."
   Accelerate are spurious — verified NaN-free in and out. They are silenced in
   the reference scripts.
 - **Do not reach for fp16 on the CPU execution provider.** Measured with
-  `fp16_spike.py` on ONNX Runtime 1.21: the code predictor goes from 1.88 ms
+  `benchmark_precision.py` on ONNX Runtime 1.21: the code predictor goes from 1.88 ms
   to 30.72 ms per step, 17x *slower*, while being numerically near-perfect.
   There are no fast fp16 kernels for these ops on Apple silicon, so it casts
   and computes element-wise.

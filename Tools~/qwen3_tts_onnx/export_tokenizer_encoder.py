@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export the 12 Hz speech-tokenizer encoder for official Base ICL clone.
 
-I/O for Spark C# QwenTokenizerEncoderModel:
+I/O for the C# QwenTokenizerEncoderModel:
   wav (1, GRAPH_SAMPLES) float32 at 24 kHz, zero-padded
   → audio_codes (1, GRAPH_FRAMES, 16) int64
 
@@ -18,7 +18,7 @@ Official Qwen3TTSTokenizer.encode:
 
 Load the tokenizer only — do not load the 1.7B talker.
 
-GRAPH_SAMPLES / SamplesPerFrame must match Spark
+GRAPH_SAMPLES / SamplesPerFrame must match the C#
 QwenTokenizerEncoderModel.
 """
 

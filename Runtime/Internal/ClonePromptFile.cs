@@ -7,7 +7,7 @@ namespace QwenTTS.Internal
     /// <summary>
     /// On-disk form of a clone prompt.
     ///
-    /// The x-vector and the 12 Hz reference codes are pure functions of the
+    /// The speaker embedding and the reference codec frames are pure functions of the
     /// reference wav, but deriving them costs a speaker-encoder run plus a
     /// tokenizer-encoder run behind a ~370 MB session. Persisting them turns
     /// every subsequent voice load into a file read.

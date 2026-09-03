@@ -1,6 +1,6 @@
 // One engine, two independent checkpoints. VoiceDesign samples a speaker from
 // an instruct; Base clones one from a reference recording using the official
-// in-context path (12 Hz ref codes + ref text + x-vector).
+// in-context path (reference codes + reference text + speaker embedding).
 //
 // The halves are deliberately symmetric and separately lockable: each is ~13 GB
 // resident, they are needed in different phases of a session, and a host that
@@ -80,7 +80,7 @@ namespace QwenTTS.Engine
 
         public bool IsLoaded(QwenCheckpoint checkpoint) => HalfFor(checkpoint).IsLoaded;
 
-        /// <summary>True when the Base checkpoint's 12 Hz encoder is available for ICL.</summary>
+        /// <summary>True when the Base checkpoint's codec encoder is installed.</summary>
         public bool HasIclEncoder => _clone.TokenizerEncoder != null;
 
         #region Load / evict
@@ -213,7 +213,7 @@ namespace QwenTTS.Engine
 
         /// <summary>
         /// The reusable part of a clone: the 2048-d speaker vector and, for
-        /// in-context cloning, the 12 Hz codes of the reference. Both are pure
+        /// in-context cloning, the codec frames of the reference. Both are pure
         /// functions of the reference audio, so a host should persist them
         /// rather than re-derive them on every load.
         /// </summary>
@@ -258,7 +258,7 @@ namespace QwenTTS.Engine
                 Load(_clone);
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var tokenIds = _clone.Tokenizer.BuildCustomVoicePrompt(text, speaker: null, language, instruct: null);
+                var tokenIds = _clone.Tokenizer.BuildClonePrompt(text, speaker: null, language, instruct: null);
                 if (tokenIds.Length < 8)
                     throw new InvalidOperationException("Prompt tokenization produced too few tokens.");
 
@@ -442,7 +442,7 @@ namespace QwenTTS.Engine
 
     /// <summary>
     /// The speaker identity extracted from a reference recording: an x-vector
-    /// always, plus the 12 Hz reference codes when in-context cloning is used.
+    /// always, plus the reference codec frames when in-context cloning is used.
     /// </summary>
     internal readonly struct ClonePrompt
     {

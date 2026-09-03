@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export VoiceDesign code predictor.
 
-ElBruno / Spark C# layout (NOT wavekat's baked projection):
+Layout the C# expects (the projection is applied separately, not baked in here):
   inputs_embeds: (B, S, 1024)  — projection is a separate npy, applied in C#
   generation_steps, past_keys, past_values
   → logits (B, S, 2048), present_keys, present_values

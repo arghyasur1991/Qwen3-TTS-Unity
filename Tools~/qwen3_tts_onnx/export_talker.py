@@ -19,11 +19,10 @@ decode export never listed `inputs_embeds` in `dynamic_axes`, so tracing
 pinned its sequence axis to the dummy's length of 1. Naming the axis is the
 whole fix. Verified bit-exact (`0.000e+00` on logits, hidden states and all
 28 layers of KV, in both modes, on both checkpoints) against the pair it
-replaced; see `docs/Qwen3-TTS-Unity.md` §4.
+replaced.
 
 Usually driven by `export_all.py`. Standalone:
 
-    conda activate sparktts
     python export_talker.py --output-dir ~/Downloads/Qwen3-TTS-ONNX/Qwen3-1.7B-Base \
         --model-id Qwen/Qwen3-TTS-12Hz-1.7B-Base
 """

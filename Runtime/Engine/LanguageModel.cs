@@ -19,8 +19,9 @@ namespace QwenTTS.Engine
 {
 
 /// <summary>
-/// ONNX language model for Qwen3-TTS VoiceDesign (same graph split as CustomVoice).
-/// Sessions are Spark ORTModel instances (QwenOnnxModel).
+/// The talker: the autoregressive model that turns a prompt into codec frames,
+/// one frame being a group-0 token from the talker plus fifteen residual tokens
+/// from the code predictor.
 /// </summary>
 internal sealed class LanguageModel : IDisposable
 {

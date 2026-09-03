@@ -9,7 +9,7 @@ Quartering the weight bytes is the remaining lever.
 int8 and not fp16: ONNX Runtime's CPU provider has hand-written int8 GEMM
 kernels in MLAS, but no fast fp16 kernels for these ops on Apple silicon. fp16
 measured **17x slower** while being numerically near-perfect — see
-`fp16_spike.py`.
+`benchmark_precision.py`.
 
 Two settings matter for quality and both default the careful way:
 
@@ -34,7 +34,6 @@ Two sets of weights are held back in fp32:
   twenty-eight layers halves the error to 7.2%, restores an exact transcript,
   and still gives 1.76x instead of 2.26x.
 
-    conda activate sparktts
     python quantize_int8.py ~/Downloads/Qwen3-TTS-ONNX/Qwen3-1.7B-VoiceDesign
 """
 

@@ -7,7 +7,8 @@ using QwenTTS.Onnx;
 namespace QwenTTS.Engine
 {
     /// <summary>
-    /// 12 Hz speech-tokenizer encoder for official Base ICL clone.
+    /// Speech-tokenizer encoder: reference waveform to codec frames, for
+    /// in-context cloning on the Base checkpoint.
     /// Graph is traced at <see cref="GraphSamples"/> (Mimi pad/reshape
     /// freeze T; dynamo export fails). Pad/crop the wav, then keep
     /// <c>originalSamples / SamplesPerFrame</c> frames — same trim as
@@ -39,7 +40,7 @@ namespace QwenTTS.Engine
             int keep = original / SamplesPerFrame;
             if (keep < 1)
                 throw new InvalidOperationException(
-                    "Reference audio is shorter than one 12 Hz codec frame (80 ms).");
+                    "Reference audio is shorter than a single codec frame (80 ms).");
 
             var padded = new float[GraphSamples];
             Buffer.BlockCopy(

@@ -8,14 +8,19 @@ using QwenTTS.Onnx;
 namespace QwenTTS.Engine
 {
     /// <summary>
-    /// Qwen ONNX graph loaded through Spark's ORTModel (load policy, EP, session lifetime).
-    /// Autoregressive TTS calls Run() synchronously after EnsureLoaded — do not wrap each
-    /// decode step in RunDisposable/Task.Run.
+    /// A Qwen graph on top of <see cref="ORTModel"/>, which owns load policy,
+    /// execution-provider selection and session lifetime.
+    ///
+    /// Autoregressive generation calls Run() synchronously after EnsureLoaded.
+    /// Do not wrap an individual decode step in a Task: there are sixteen per
+    /// output frame and the scheduling costs more than the step.
     /// </summary>
     internal class QwenOnnxModel : ORTModel
     {
-        // ElBruno layout is a few MB of protobuf + sibling .onnx.data.
-        // zukky Base talkers are ~5 GB single-file protobufs (InvalidProtobuf).
+        // An expected export is a few MB of protobuf beside a sibling
+        // .onnx.data. A multi-gigabyte .onnx means a single-file export, which
+        // ONNX Runtime rejects as an invalid protobuf past 2 GB — worth failing
+        // on with a clear message rather than a parse error.
         private const long MaxOnnxBytes = 64_000_000;
 
         public readonly QwenCheckpoint Checkpoint;
