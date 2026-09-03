@@ -88,6 +88,20 @@ namespace QwenTTS.Engine
         /// before it existed have the prefill/decode pair instead, and both
         /// layouts are supported so an install does not have to be redone.
         /// </summary>
+        /// <summary>
+        /// Requested weight precision. Set from
+        /// <see cref="QwenTtsSettings.Precision"/>; individual graphs fall back
+        /// to fp32 when their quantized file is absent.
+        /// </summary>
+        public static QwenPrecision Precision = QwenPrecision.Float32;
+
+        /// <summary>True when <c>&lt;graph&gt;_int8.onnx</c> is installed.</summary>
+        public static bool HasInt8(QwenCheckpoint checkpoint, string graph)
+        {
+            var dir = DirectoryFor(checkpoint);
+            return File.Exists(Path.Combine(dir, graph + "_int8.onnx"));
+        }
+
         public static bool HasUnifiedTalker(QwenCheckpoint checkpoint)
         {
             var dir = DirectoryFor(checkpoint);

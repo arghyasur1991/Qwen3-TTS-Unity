@@ -57,13 +57,15 @@ namespace QwenTTS
                 bool rebind = IsInitialized &&
                               (_settings.ExecutionProvider != settings.ExecutionProvider ||
                                _settings.ModelRoot != settings.ModelRoot ||
-                               _settings.IntraOpThreads != settings.IntraOpThreads);
+                               _settings.IntraOpThreads != settings.IntraOpThreads ||
+                               _settings.Precision != settings.Precision);
                 if (rebind)
                     UnloadInternal();
 
                 _settings = settings;
                 QwenLog.LogLevel = settings.LogLevel;
                 QwenModelPaths.Root = settings.ModelRoot;
+                QwenModelPaths.Precision = settings.Precision;
                 // Order matters: memory usage decides each model's load
                 // policy at construction, so it must be set before any
                 // session wrapper exists.
@@ -74,7 +76,7 @@ namespace QwenTTS
 
                 QwenLog.Log(
                     $"[QwenTTS] Initialized (root {QwenModelPaths.Root}, EP {settings.ExecutionProvider}, " +
-                    $"memory {settings.MemoryUsage}). " +
+                    $"memory {settings.MemoryUsage}, precision {settings.Precision}). " +
                     $"VoiceDesign installed={QwenModelPaths.IsPresent(QwenCheckpoint.VoiceDesign)}, " +
                     $"Base installed={QwenModelPaths.IsPresent(QwenCheckpoint.Base)}");
             }

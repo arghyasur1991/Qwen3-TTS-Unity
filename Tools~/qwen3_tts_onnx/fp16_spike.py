@@ -90,7 +90,9 @@ def quantize_int8(model_dir: str, graph: str) -> str:
         print(f"  {os.path.basename(dst)} already present, reusing")
         return dst
     print(f"  quantizing {graph} to int8 ...")
-    quantize_dynamic(src, dst, weight_type=QuantType.QInt8)
+    quantize_dynamic(src, dst, weight_type=QuantType.QInt8, per_channel=True,
+                     use_external_data_format=True,
+                     extra_options={"MatMulConstBOnly": True})
     return dst
 
 
@@ -145,18 +147,20 @@ def main():
     ap.add_argument("--iters", type=int, default=20)
     ap.add_argument("--int8", action="store_true",
                     help="Also try dynamic int8, which MLAS has real CPU kernels for")
+    ap.add_argument("--skip-fp16", action="store_true",
+                    help="fp16 is settled (17x slower); skip converting it")
     args = ap.parse_args()
 
     model_dir = os.path.expanduser(args.model_dir)
     full = json.load(open(os.path.join(model_dir, "embeddings", "config.json")))
 
     print("Converting ...")
-    fp16_path = convert(model_dir, args.graph)
+    fp16_path = None if args.skip_fp16 else convert(model_dir, args.graph)
 
     fp32_path = os.path.join(model_dir, f"{args.graph}.onnx")
-    for p in (fp32_path, fp16_path):
-        total = os.path.getsize(p) + os.path.getsize(p + ".data")
-        print(f"  {os.path.basename(p):<20} {total / 1e9:6.2f} GB")
+    for p in [q for q in (fp32_path, fp16_path) if q]:
+        total = sum(os.path.getsize(x) for x in (p, p + ".data") if os.path.isfile(x))
+        print(f"  {os.path.basename(p):<24} {total / 1e9:6.2f} GB")
 
     rng = np.random.default_rng(7)
     if args.graph == "talker":
@@ -174,16 +178,19 @@ def main():
     del s32
     gc.collect()
 
-    s16 = session(fp16_path)
-    ms16, logits16 = bench(s16, feeds, args.iters)
-    print(f"  fp16 {ms16:7.2f} ms   ({ms32 / ms16:.2f}x)")
-    del s16
-    gc.collect()
+    ms16, logits16 = None, None
+    if fp16_path:
+        s16 = session(fp16_path)
+        ms16, logits16 = bench(s16, feeds, args.iters)
+        print(f"  fp16 {ms16:7.2f} ms   ({ms32 / ms16:.2f}x)")
+        del s16
+        gc.collect()
 
     ms8, logits8 = None, None
     if args.int8:
         i8 = quantize_int8(model_dir, args.graph)
-        total = os.path.getsize(i8)
+        total = sum(os.path.getsize(x) for x in (i8, i8 + ".data", i8 + "_data")
+                    if os.path.isfile(x))
         print(f"  int8 file {total / 1e9:.2f} GB")
         s8 = session(i8)
         ms8, logits8 = bench(s8, feeds, args.iters)
@@ -204,14 +211,16 @@ def main():
               f"argmax agrees {agree}, top-{k} overlap {len(a & b)}/{k}")
 
     print("\nNumerics vs fp32:")
-    report("fp16", logits16)
+    if logits16 is not None:
+        report("fp16", logits16)
     if logits8 is not None:
         report("int8", logits8)
 
     def verdict(ms):
         return "FASTER" if ms < ms32 * 0.95 else ("SLOWER" if ms > ms32 * 1.05 else "NO CHANGE")
 
-    print(f"\nfp16 is {verdict(ms16)} on this build.")
+    if ms16 is not None:
+        print(f"\nfp16 is {verdict(ms16)} on this build.")
     if ms8 is not None:
         print(f"int8 is {verdict(ms8)} on this build.")
 

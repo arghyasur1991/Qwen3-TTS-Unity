@@ -19,6 +19,28 @@ namespace QwenTTS
     }
 
     /// <summary>Engine-wide settings. Pass to <see cref="QwenTts.Initialize"/>.</summary>
+    /// <summary>
+    /// Weight precision for the two autoregressive graphs.
+    /// </summary>
+    public enum QwenPrecision
+    {
+        /// <summary>As exported. The reference output.</summary>
+        Float32 = 0,
+
+        /// <summary>
+        /// int8 weights with dynamically quantized activations, for the talker
+        /// and code predictor only. Roughly a quarter of the weight bytes,
+        /// which is what those two stages are actually limited by, at some cost
+        /// in fidelity — the sampler sees shifted logits and can pick different
+        /// tokens. Falls back to <see cref="Float32"/> per graph when the
+        /// quantized file is not installed.
+        ///
+        /// fp16 is deliberately absent: ONNX Runtime's CPU provider has no fast
+        /// fp16 kernels for these ops on Apple silicon and measured 17x slower.
+        /// </summary>
+        Int8 = 1,
+    }
+
     public sealed class QwenTtsSettings
     {
         /// <summary>
@@ -42,6 +64,13 @@ namespace QwenTTS
 
         /// <summary>Per-stage timing to the log.</summary>
         public bool LogTiming;
+
+        /// <summary>
+        /// Weight precision for the talker and code predictor. Defaults to
+        /// <see cref="QwenPrecision.Float32"/>, because int8 is a fidelity
+        /// trade rather than a free win and should be chosen deliberately.
+        /// </summary>
+        public QwenPrecision Precision = QwenPrecision.Float32;
 
         /// <summary>
         /// ONNX Runtime intra-op threads. 0 leaves ORT's own choice alone.

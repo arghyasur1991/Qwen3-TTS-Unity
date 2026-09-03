@@ -22,10 +22,27 @@ namespace QwenTTS.Engine
 
         public QwenOnnxModel(string modelName, QwenCheckpoint checkpoint,
             ExecutionProvider executionProvider = ExecutionProvider.CPU)
-            : base(modelName, QwenModelPaths.FolderName(checkpoint), Precision.FP32,
+            : base(modelName, QwenModelPaths.FolderName(checkpoint),
+                   ResolvePrecision(modelName, checkpoint),
                    executionProvider, deferLoad: true)
         {
             Checkpoint = checkpoint;
+        }
+
+        /// <summary>
+        /// int8 per graph, not per checkpoint. Only the talker and code
+        /// predictor are worth quantizing — they are the two that stream their
+        /// whole weight set once per token — and asking for int8 must not stop
+        /// the vocoder or the encoders loading, so a missing quantized file is
+        /// a silent downgrade rather than an error.
+        /// </summary>
+        static Precision ResolvePrecision(string modelName, QwenCheckpoint checkpoint)
+        {
+            if (QwenModelPaths.Precision != QwenPrecision.Int8)
+                return Precision.FP32;
+            if (!QwenModelPaths.HasInt8(checkpoint, modelName))
+                return Precision.FP32;
+            return Precision.Int8;
         }
 
         public new void EnsureLoaded()

@@ -31,6 +31,16 @@ Spark-TTS engine that shared that repo is not carried over.
   for ~138 MB per checkpoint. Verified byte-identical against on-demand
   projection on a greedy utterance. Exports without the files fall back to
   projecting on demand; a partial set is rejected rather than mixed.
+- **`QwenPrecision.Int8`**, opt-in, resolved per graph with an fp32 fallback.
+  1.40x end to end and less resident memory, since the talker is 2.35 GB rather
+  than 5.67. Quantize with `Tools~/qwen3_tts_onnx/quantize_int8.py`, which
+  holds the output projection and the outermost decoder layers in fp32: without
+  that the talker passes every numerical check and still drops phonemes
+  (Whisper reads "The Saner sees your ceiling"), and with it a five-line corpus
+  transcribes at mean WER 0.017 against 0.000 for fp32. Not bit-identical, so
+  it stays a deliberate choice. fp16 is not offered - ONNX Runtime's CPU
+  provider has no fast fp16 kernels for these ops on Apple silicon and measured
+  17x slower.
 - **`QwenTts.ProfilingEnabled` / `ProfileReport()`** for per-stage wall clock,
   off by default.
 - **`QwenTtsSettings.IntraOpThreads`** to override ONNX Runtime's thread

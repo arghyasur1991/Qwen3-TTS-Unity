@@ -154,6 +154,37 @@ the reference audio, so reloading is a file read rather than another
 speaker-encoder and tokenizer-encoder run. If the prompt file is from an older
 export it is ignored and the prompt is re-derived from the reference.
 
+## Precision
+
+The talker and code predictor read every weight once per generated token, so
+they are limited by memory bandwidth rather than arithmetic. int8 weights cut
+that traffic and are ~1.4x faster end to end:
+
+```csharp
+QwenTts.Initialize(new QwenTtsSettings
+{
+    ModelRoot = "...",
+    Precision = QwenPrecision.Int8,   // default is Float32
+});
+```
+
+Produce the quantized graphs with `Tools~/qwen3_tts_onnx/quantize_int8.py`.
+Resolution is per graph, so a checkpoint missing `talker_int8.onnx` quietly
+uses the fp32 talker rather than failing.
+
+It is opt-in because it is not free. Quantizing every layer looked fine on
+every numerical check — argmax agreed, the audio was the right length — and a
+Whisper transcript of it read "The **Saner** sees your ceiling", a dropped
+phoneme. The script therefore holds the output projection and the first and
+last three decoder layers in fp32, which halves the logit error and restores
+an exact transcript for a little of the speedup. Even then the audio is not
+bit-identical to fp32 and a voice can differ subtly, so listen before shipping
+it.
+
+fp16 is deliberately not offered: ONNX Runtime's CPU provider has no fast fp16
+kernels for these ops on Apple silicon and measured **17x slower** while being
+numerically near-perfect.
+
 ## Residency
 
 Each checkpoint is ~13 GB, and the two are normally needed in *different phases*
