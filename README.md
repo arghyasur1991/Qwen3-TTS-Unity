@@ -172,6 +172,14 @@ Produce the quantized graphs with `Tools~/qwen3_tts_onnx/quantize_int8.py`.
 Resolution is per graph, so a checkpoint missing `talker_int8.onnx` quietly
 uses the fp32 talker rather than failing.
 
+Both checkpoints quantize, so designed voices and clones both benefit — clones
+slightly more (1.55x against 1.40x), because their in-context prefill puts a
+greater share of the work in the talker. Only the talker and code predictor are
+quantized: the vocoder, and on the cloning checkpoint the speaker encoder and
+tokenizer encoder, stay fp32, so nothing about how a voice is *captured* is
+touched. Scored over a five-line corpus, cloned int8 matches cloned fp32 exactly
+(mean WER 0.017 either way).
+
 It is opt-in because it is not free. Quantizing every layer looked fine on
 every numerical check — argmax agreed, the audio was the right length — and a
 Whisper transcript of it read "The **Saner** sees your ceiling", a dropped

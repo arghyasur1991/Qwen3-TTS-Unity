@@ -37,8 +37,11 @@ Spark-TTS engine that shared that repo is not carried over.
   holds the output projection and the outermost decoder layers in fp32: without
   that the talker passes every numerical check and still drops phonemes
   (Whisper reads "The Saner sees your ceiling"), and with it a five-line corpus
-  transcribes at mean WER 0.017 against 0.000 for fp32. Not bit-identical, so
-  it stays a deliberate choice. fp16 is not offered - ONNX Runtime's CPU
+  transcribes at mean WER 0.017 against 0.000 for fp32. Both checkpoints
+  quantize; on the cloning path int8 matches fp32 exactly at mean WER 0.017
+  either way, and gains more speed (1.55x vs 1.40x) because its in-context
+  prefill puts more of the work in the talker. The vocoder and the clone
+  encoders stay fp32. Not bit-identical, so it stays a deliberate choice. fp16 is not offered - ONNX Runtime's CPU
   provider has no fast fp16 kernels for these ops on Apple silicon and measured
   17x slower.
 - **`QwenTts.ProfilingEnabled` / `ProfileReport()`** for per-stage wall clock,
