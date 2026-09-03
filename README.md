@@ -237,13 +237,21 @@ The two checkpoints have independent locks, so a designed and a cloned voice
 can generate at the same time. Two utterances on the *same* checkpoint
 serialise, because the talker reuses its KV and sampler buffers.
 
-## Editor: holding models across a script compile
+## Logging
 
-A domain reload would otherwise throw away every session open, on every
-compile. `QwenTTS.Editor` can detach the native ONNX allocations before the
-reload and reattach them after. It is opt-in, does nothing unless the host asks
-for it, and falls back to a normal reload if a future ONNX Runtime moves the
-private members it relies on.
+ONNX Runtime's own diagnostics are routed into the Unity console, tagged with
+the model they came from:
+
+```
+[ONNX-INFO][talker][onnxruntime] Session successfully initialized.
+```
+
+`QwenTtsSettings.LogLevel` sets the verbosity. Note that ONNX Runtime allows
+**one environment per process**, and whichever library creates it owns the
+logging sink for every library in the process. If another ONNX library in your
+project initializes first, this package uses its sink and leaves the level
+alone; if this package initializes first, the other library can attribute its
+own models with `QwenTts.SetOnnxLogContext(name)`.
 
 ## Licence and attribution
 

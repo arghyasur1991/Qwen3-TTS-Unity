@@ -289,54 +289,31 @@ namespace QwenTTS.Onnx
 
         protected string ModelFilePath => GetModelPath(_config.ModelName);
 
-        internal string SessionKeepAliveKey => GetModelPath(_config.ModelName);
 
         internal bool HasLoadedSession => _session != null && !_disposed;
 
-        /// <summary>
-        /// Releases the loaded session to the caller without disposing it, so
-        /// the editor keep-alive can hold its native allocation across a
-        /// domain reload. The model returns to an unloaded state.
-        /// </summary>
-        internal bool TryReleaseSessionForKeepAlive(out string key, out InferenceSession session)
-        {
-            key = SessionKeepAliveKey;
-            session = _session;
-            if (session == null)
-                return false;
-            _session = null;
-            _loadTask = null;
-            IsInitialized = false;
-            return true;
-        }
-
-        internal void AdoptSession(InferenceSession session)
-        {
-            if (session == null)
-                throw new ArgumentNullException(nameof(session));
-            _session?.Dispose();
-            _session = session;
-            _inputNames = session.InputMetadata.Keys.ToList();
-            _loadTask = Task.FromResult(session);
-            _disposed = false;
-            IsInitialized = true;
-        }
 
         /// <summary>
         /// Sets the logging parameter context for ONNX Runtime operations.
         /// </summary>
         /// <param name="modelName">The name of the model currently being processed</param>
-        protected static void SetLoggingParam(string modelName)
+        protected static void SetLoggingParam(string modelName) => SetLogContext(modelName);
+
+        /// <summary>
+        /// Same as <see cref="SetLoggingParam"/>, reachable by another library
+        /// sharing this process's ONNX Runtime environment. See
+        /// <c>QwenTts.SetOnnxLogContext</c>.
+        /// </summary>
+        internal static void SetLogContext(string modelName)
         {
             if (string.IsNullOrEmpty(modelName))
                 return;
-                
-            var loadingInfo = new LoadingInfo { ModelName = modelName };
+            // Nothing to attribute through if someone else created the
+            // environment; their sink reads their own buffer, not this one.
             if (_loggingParam == IntPtr.Zero)
-            {
-                _loggingParam = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(LoadingInfo)));
-            }
-            Marshal.StructureToPtr(loadingInfo, _loggingParam, false);
+                return;
+
+            Marshal.StructureToPtr(new LoadingInfo { ModelName = modelName }, _loggingParam, false);
         }
 
         #endregion
@@ -356,6 +333,10 @@ namespace QwenTTS.Onnx
                 throw new FileNotFoundException($"Model file not found: {modelPath}");
             }
             QwenLog.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
+            // Attribute the native lines the session open itself produces —
+            // arena growth, provider selection, graph optimisation. Without
+            // this they arrive with an empty model name.
+            SetLogContext(_config.ModelName);
 
             try
             {
@@ -389,9 +370,21 @@ namespace QwenTTS.Onnx
         }
 
         /// <summary>
-        /// Initializes ONNX Runtime logging with Unity integration.
-        /// Default OrtEnv only — a custom logger delegate becomes a dangling
-        /// native fn ptr after an editor domain reload.
+        /// Creates the ONNX Runtime environment and routes its diagnostics into
+        /// Unity.
+        ///
+        /// The sink is a managed delegate handed to native code as a function
+        /// pointer, which is only safe as long as nothing survives an editor
+        /// domain reload still holding this environment: the thunk belongs to
+        /// the domain, and ONNX Runtime has no API to replace an environment's
+        /// sink after creation. That used to rule the sink out in the editor,
+        /// because sessions were deliberately kept alive across reloads. They
+        /// are not any more — see docs/OnnxDomainReloadKeepAlive.md in the host
+        /// project — so editor and player share one path.
+        ///
+        /// ONNX Runtime allows one environment per process, so whichever
+        /// library creates it owns the sink for everyone. <see cref="SetLogContext"/>
+        /// is how another library attributes its own model to a native line.
         /// </summary>
         private static void InitializeOnnxLogging()
         {
@@ -413,20 +406,9 @@ namespace QwenTTS.Onnx
 
             try
             {
-#if UNITY_EDITOR
-                // Default env in the editor. Handing native ORT a managed
-                // delegate leaves a dangling function pointer after a domain
-                // reload, and the next Session.Run segfaults inside
-                // UserLoggingSink::SendImpl. The editor reloads constantly, so
-                // the sink is not worth the crash there.
-                _ = OrtEnv.Instance();
-                QwenLog.Log($"[ORTModel] ONNX Runtime environment ready (LogLevel: {_ortLogLevel})");
-#else
-                // Player: route ORT's own diagnostics into Unity. _loggingParam
-                // carries the name of whichever model is currently executing —
-                // SetLoggingParam updates it before each load and run — so
-                // native lines can be attributed. No domain reload here, so the
-                // delegate stays valid for the life of the process.
+                // _loggingParam carries the name of whichever model is
+                // currently executing, so a native line can be attributed;
+                // SetLoggingParam updates it before each load and run.
                 _loggingParam = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(LoadingInfo)));
                 var options = new EnvironmentCreationOptions
                 {
@@ -436,8 +418,8 @@ namespace QwenTTS.Onnx
                     loggingParam = _loggingParam,
                 };
                 OrtEnv.CreateInstanceWithOptions(ref options);
-                QwenLog.Log($"[ORTModel] ONNX Runtime environment ready with Unity logging (LogLevel: {_ortLogLevel})");
-#endif
+                QwenLog.Log(
+                    $"[ORTModel] ONNX Runtime environment ready with Unity logging (LogLevel: {_ortLogLevel})");
                 _loggingInitialized = true;
             }
             catch (Exception e)

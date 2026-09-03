@@ -69,9 +69,11 @@ package.
 
 - **Window → Qwen3 TTS → Model Status** reports what is installed, what is
   loaded, and which files are missing.
-- Opt-in domain-reload keep-alive for native ONNX allocations, so a script
-  compile does not discard every session open. It reports unavailability rather
-  than failing if a future ONNX Runtime moves the private members it uses.
+- ONNX Runtime's own diagnostics are routed into the Unity console in both the
+  editor and players, tagged with the model that produced them. Because ONNX
+  Runtime allows one environment per process, the library that creates it owns
+  the sink; `QwenTts.SetOnnxLogContext` lets another library attribute its own
+  models to it.
 
 ### Tools
 

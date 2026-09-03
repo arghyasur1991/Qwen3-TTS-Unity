@@ -398,46 +398,6 @@ namespace QwenTTS.Engine
                 _clone.Dispose();
         }
 
-        #region Editor keep-alive support
-
-        internal void CollectOnnxModels(List<ORTModel> list)
-        {
-            CollectFrom(_voiceDesign, list);
-            CollectFrom(_clone, list);
-        }
-
-        static void CollectFrom(Half half, List<ORTModel> list)
-        {
-            lock (half.Gate)
-            {
-                half.Talker?.CollectOnnxModels(list);
-                if (half.Vocoder != null)
-                    list.Add(half.Vocoder);
-                if (half.SpeakerEncoder != null)
-                    list.Add(half.SpeakerEncoder);
-                if (half.TokenizerEncoder != null)
-                    list.Add(half.TokenizerEncoder);
-            }
-        }
-
-        internal void AdoptNativeSessions(Dictionary<string, InferenceSession> sessions)
-        {
-            if (sessions == null || sessions.Count == 0)
-                return;
-            var models = new List<ORTModel>();
-            CollectOnnxModels(models);
-            foreach (var model in models)
-            {
-                if (sessions.TryGetValue(model.SessionKeepAliveKey, out var session))
-                {
-                    model.AdoptSession(session);
-                    sessions.Remove(model.SessionKeepAliveKey);
-                    QwenLog.Log("[QwenTtsEngine] Adopted " + model.SessionKeepAliveKey);
-                }
-            }
-        }
-
-        #endregion
     }
 
     /// <summary>

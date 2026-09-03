@@ -133,6 +133,22 @@ namespace QwenTTS
             }
         }
 
+        /// <summary>
+        /// Names the model that native ONNX Runtime lines should be attributed
+        /// to, until the next call.
+        ///
+        /// ONNX Runtime allows one environment per process, so the library that
+        /// creates it owns the logging sink for every library in the process. If
+        /// this package initialized first, another library's own attribution
+        /// buffer is not the one the sink reads, and its native lines arrive
+        /// labelled with whatever this package set last. Calling this before
+        /// loading or running a model fixes that.
+        ///
+        /// Does nothing if this package did not create the environment.
+        /// </summary>
+        public static void SetOnnxLogContext(string modelName) =>
+            Onnx.ORTModel.SetLogContext(modelName);
+
         /// <summary>Zero the profiler's counters.</summary>
         public static void ResetProfile() => Internal.GenerationProfiler.Reset();
 
@@ -168,7 +184,6 @@ namespace QwenTTS
             _engine?.Dispose();
             _engine = null;
             _engineTask = null;
-            KeepAliveHandoff.Clear();
         }
 
         /// <summary>Unload and forget the settings.</summary>
@@ -385,17 +400,11 @@ namespace QwenTTS
                 _engineTask = BackgroundWork.Run(() =>
                 {
                     var engine = new QwenTtsEngine(ep);
-                    var recovered = KeepAliveHandoff.TakeSessions();
-                    if (recovered != null)
-                        engine.AdoptNativeSessions(recovered);
                     _engine = engine;
                     return engine;
                 });
                 return _engineTask;
             }
         }
-
-        /// <summary>Engine handle for the editor keep-alive. Null when nothing is loaded.</summary>
-        internal static QwenTtsEngine EngineOrNull => _engine;
     }
 }

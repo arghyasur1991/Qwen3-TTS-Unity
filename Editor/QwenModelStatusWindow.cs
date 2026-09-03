@@ -19,7 +19,6 @@ namespace QwenTTS.Editor
         CheckpointStatus _voiceDesign;
         CheckpointStatus _base;
         string _root;
-        bool _keepAcrossReload;
 
         [MenuItem("Window/Qwen3 TTS/Model Status")]
         static void Open()
@@ -49,7 +48,6 @@ namespace QwenTTS.Editor
             _root = Engine.QwenModelPaths.Root;
             _voiceDesign = QwenTts.GetStatus(QwenCheckpoint.VoiceDesign);
             _base = QwenTts.GetStatus(QwenCheckpoint.Base);
-            _keepAcrossReload = NativeSessionKeepAlive.KeepRequested;
         }
 
         void OnGUI()
@@ -75,28 +73,6 @@ namespace QwenTTS.Editor
             DrawCheckpoint(_voiceDesign, "Invents a speaker from an instruct.");
             EditorGUILayout.Space();
             DrawCheckpoint(_base, "Clones a speaker from a reference recording.");
-
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Editor", EditorStyles.boldLabel);
-            bool keep = EditorGUILayout.ToggleLeft(
-                "Hold models across script compiles", _keepAcrossReload);
-            if (keep != _keepAcrossReload)
-            {
-                NativeSessionKeepAlive.KeepRequested = keep;
-                _keepAcrossReload = keep;
-            }
-            if (!NativeSessionKeepAlive.IsSupported)
-            {
-                EditorGUILayout.HelpBox(
-                    "Hold is unavailable on this ONNX Runtime build; models will reload " +
-                    "after each compile.", MessageType.Warning);
-            }
-            else
-            {
-                EditorGUILayout.LabelField(
-                    "Saves roughly 20 s of session loading per compile.",
-                    EditorStyles.miniLabel);
-            }
 
             EditorGUILayout.Space();
             using (new EditorGUI.DisabledScope(!QwenTts.IsInitialized))
