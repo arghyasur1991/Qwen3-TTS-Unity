@@ -1,0 +1,30 @@
+{
+  "name": "com.genesis.qwentts.unity",
+  "version": "0.1.0",
+  "displayName": "Qwen3 TTS Unity",
+  "description": "On-device Qwen3-TTS for Unity via ONNX Runtime. VoiceDesign invents a speaker from a natural-language description; Base clones one from a reference recording using Qwen's in-context path. Weights are not included or downloaded - see the README for the install layout and the memory budget.",
+  "unity": "6000.0",
+  "unityRelease": "46f1",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arghyasur1991/Qwen3-TTS-Unity.git"
+  },
+  "documentationUrl": "https://github.com/arghyasur1991/Qwen3-TTS-Unity#readme",
+  "dependencies": {
+    "com.github.asus4.onnxruntime": "0.4.0",
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  },
+  "keywords": [
+    "tts",
+    "speech",
+    "audio",
+    "qwen",
+    "voice",
+    "voice-cloning",
+    "onnx"
+  ],
+  "author": {
+    "name": "Genesis"
+  }
+}

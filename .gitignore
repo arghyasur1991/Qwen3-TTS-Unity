@@ -1,0 +1,23 @@
+# A global ignore of *~ would silently swallow Tools~, which is the Unity
+# convention for a folder the asset importer must not see. Un-ignore the
+# directory itself first: git will not descend into an excluded directory,
+# so a pattern for its contents alone is not enough.
+!Tools~/
+!Tools~/**
+
+# OS and editor noise
+.DS_Store
+
+# Python tooling (Tools~/qwen3_tts_onnx)
+__pycache__/
+*.pyc
+
+# Exported weights are never committed; see README for the install layout
+*.onnx
+*.onnx.data
+
+# Unity project folders, in case the package is opened as a project
+Library/
+Temp/
+Logs/
+obj/
