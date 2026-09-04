@@ -1,0 +1,16 @@
+# Python dependencies for the Qwen3-TTS ONNX export and reference scripts.
+# Only packages these scripts import directly are listed.
+#
+# Also needed, and not on PyPI:
+#   pip install git+https://github.com/QwenLM/Qwen3-TTS.git      (qwen_tts)
+#
+# Exports use torch.onnx.export at opset 17 (dynamo=False) except the vocoder,
+# which tries the dynamo exporter first.
+
+torch>=2.5
+transformers>=4.57
+onnx>=1.17
+onnxruntime>=1.21
+numpy>=1.26
+soundfile>=0.12
+librosa>=0.10        # icl_prompt_ref.py only (Slaney mel filterbank check)
