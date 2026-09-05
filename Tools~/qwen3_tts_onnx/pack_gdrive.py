@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""Pack the Qwen3-TTS ONNX files the Unity package actually opens into a zip.
+"""Pack the Qwen3-TTS ONNX files the Unity package actually opens into zips.
 
-The export folders accumulate superseded graphs (talker_prefill / talker_decode,
-a second vocoder, Unity .meta, leftover tokenizer JSON). This copies only the
-runtime set into ``QwenTTS/<checkpoint>/`` and stores it (no deflate — the
-``.onnx.data`` files are already packed).
+A single archive of both checkpoints is ~20 GiB and is a bad Drive upload.
+This writes four store-only zips (``.onnx.data`` does not deflate) that
+extract into the same ``QwenTTS/<checkpoint>/`` layout:
 
-    python3 pack_gdrive.py \\
-        --src ~/Downloads/Qwen3-TTS-ONNX \\
-        --out ~/Downloads/QwenTTS.zip
+    QwenTTS-VoiceDesign.zip       fp32 VoiceDesign (~8.3 GB)
+    QwenTTS-Base.zip              fp32 Base (~8.7 GB)
+    QwenTTS-VoiceDesign-int8.zip  int8 overlay for VoiceDesign (~2.5 GB)
+    QwenTTS-Base-int8.zip         int8 overlay for Base (~2.5 GB)
 
-Default ``--src`` is ``~/Downloads/Qwen3-TTS-ONNX``. Default ``--out`` is
-``~/Downloads/QwenTTS.zip``.
+The fp32 zip is the required set. The int8 zip is optional: extract it
+on top of the matching fp32 folder and set ``QwenTtsSettings.Precision =
+QwenPrecision.Int8``. Missing int8 files fall back to fp32.
+
+    python3 pack_gdrive.py
+    python3 pack_gdrive.py --src ~/Downloads/Qwen3-TTS-ONNX --out-dir ~/Downloads
+    python3 pack_gdrive.py --only VoiceDesign
+
+Default ``--src`` is ``~/Downloads/Qwen3-TTS-ONNX``. Default ``--out-dir``
+is ``~/Downloads``.
 """
 from __future__ import annotations
 
@@ -25,24 +33,36 @@ VOICE = "Qwen3-1.7B-VoiceDesign"
 BASE = "Qwen3-1.7B-Base"
 CP_GROUPS = 15
 
-README = """Qwen3-TTS ONNX (Unity)
+# (zip filename, checkpoint folder, kind)
+ARCHIVES = (
+    ("QwenTTS-VoiceDesign.zip", VOICE, "fp32"),
+    ("QwenTTS-Base.zip", BASE, "fp32"),
+    ("QwenTTS-VoiceDesign-int8.zip", VOICE, "int8"),
+    ("QwenTTS-Base-int8.zip", BASE, "int8"),
+)
 
-Place this QwenTTS folder where the package can see it, then point
-QwenTtsSettings.ModelRoot at it. The engine looks for the two checkpoint
-subfolders by these exact names.
+ONLY_ALIASES = {
+    "VoiceDesign": "QwenTTS-VoiceDesign.zip",
+    "Base": "QwenTTS-Base.zip",
+    "VoiceDesign-int8": "QwenTTS-VoiceDesign-int8.zip",
+    "Base-int8": "QwenTTS-Base-int8.zip",
+}
+
+README_FP32 = """Qwen3-TTS ONNX (Unity) — fp32 checkpoint
+
+Extract this zip so the checkpoint folder sits under QwenTTS/:
 
     QwenTTS/
-      Qwen3-1.7B-VoiceDesign/     design a speaker from a description
-      Qwen3-1.7B-Base/            clone from a reference recording
+      Qwen3-1.7B-VoiceDesign/     this zip, or the Base zip
+      Qwen3-1.7B-Base/
 
-Editor convenience: Assets/StreamingAssets/QwenTTS/ (the package default).
-A shipped player should keep the weights outside StreamingAssets so they
-are not copied into the build — persistentDataPath, DLC, or a download.
+Point QwenTtsSettings.ModelRoot at that QwenTTS folder. You only need the
+checkpoint you will load: VoiceDesign to invent a speaker, Base to clone
+one. Design-then-clone wants both, extracted into the same parent.
 
-Each checkpoint is ~8 GB fp32. Optional int8 graphs (talker_int8,
-code_predictor_int8) are included; set QwenTtsSettings.Precision =
-QwenPrecision.Int8 to use them (~1.4× faster, talker ~2.35 GB resident
-instead of ~5.67 GB). Missing int8 files fall back to fp32.
+Optional int8: extract the matching *-int8.zip on top of this folder, then
+set QwenTtsSettings.Precision = QwenPrecision.Int8. Without those files
+the engine stays on fp32.
 
 Do not also copy talker_prefill / talker_decode: the unified talker.onnx
 covers both phases.
@@ -51,13 +71,26 @@ Export these yourself with Tools~/qwen3_tts_onnx/ in the Qwen3-TTS-Unity
 repository if you would rather not use this zip.
 """
 
+README_INT8 = """Qwen3-TTS ONNX (Unity) — int8 overlay
 
-def rels(checkpoint: str) -> list[str]:
+Extract this zip into the same parent as the matching fp32 zip so the
+int8 graphs land next to talker.onnx inside the checkpoint folder.
+
+    QwenTTS/<checkpoint>/talker_int8.onnx[.data]
+    QwenTTS/<checkpoint>/code_predictor_int8.onnx[.data]
+
+Then set QwenTtsSettings.Precision = QwenPrecision.Int8. This overlay is
+not a complete checkpoint — install the fp32 zip first. Missing int8
+files fall back to fp32.
+
+Int8 is ~1.4× faster; the talker is ~2.35 GB resident instead of ~5.67 GB.
+"""
+
+
+def fp32_rels(checkpoint: str) -> list[str]:
     files = [
         "talker.onnx", "talker.onnx.data",
-        "talker_int8.onnx", "talker_int8.onnx.data",
         "code_predictor.onnx", "code_predictor.onnx.data",
-        "code_predictor_int8.onnx", "code_predictor_int8.onnx.data",
         "vocoder.onnx", "vocoder.onnx.data",
         "embeddings/config.json",
         "embeddings/talker_codec_embedding.npy",
@@ -83,19 +116,29 @@ def rels(checkpoint: str) -> list[str]:
     return files
 
 
-def collect(src_root: str) -> list[tuple[str, str, int]]:
+def int8_rels() -> list[str]:
+    return [
+        "talker_int8.onnx", "talker_int8.onnx.data",
+        "code_predictor_int8.onnx", "code_predictor_int8.onnx.data",
+    ]
+
+
+def rels(checkpoint: str, kind: str) -> list[str]:
+    return int8_rels() if kind == "int8" else fp32_rels(checkpoint)
+
+
+def collect_one(src_root: str, checkpoint: str, kind: str) -> list[tuple[str, str, int]]:
     """(abspath, zip arcname, size)."""
     rows = []
     missing = []
-    for folder in (VOICE, BASE):
-        root = os.path.join(src_root, folder)
-        for rel in rels(folder):
-            path = os.path.join(root, rel)
-            arc = os.path.join("QwenTTS", folder, rel).replace("\\", "/")
-            if not os.path.isfile(path):
-                missing.append(arc)
-                continue
-            rows.append((path, arc, os.path.getsize(path)))
+    root = os.path.join(src_root, checkpoint)
+    for rel in rels(checkpoint, kind):
+        path = os.path.join(root, rel)
+        arc = os.path.join("QwenTTS", checkpoint, rel).replace("\\", "/")
+        if not os.path.isfile(path):
+            missing.append(arc)
+            continue
+        rows.append((path, arc, os.path.getsize(path)))
     if missing:
         print("missing %d files:" % len(missing), file=sys.stderr)
         for m in missing:
@@ -104,17 +147,22 @@ def collect(src_root: str) -> list[tuple[str, str, int]]:
     return rows
 
 
-def write_zip(out_path: str, rows: list[tuple[str, str, int]]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+def write_zip(out_path: str, kind: str, rows: list[tuple[str, str, int]]) -> None:
     if os.path.isfile(out_path):
         os.remove(out_path)
     total = sum(s for _, _, s in rows)
     written = 0
     n = len(rows)
     print("packing %d files, %.2f GB -> %s" % (n, total / 1e9, out_path), flush=True)
+    readme = README_INT8 if kind == "int8" else README_FP32
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
-        zf.writestr("QwenTTS/README.txt", README)
-        manifest = ["# QwenTTS ONNX manifest", "# packed %s UTC" % datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), ""]
+        zf.writestr("QwenTTS/README.txt", readme)
+        manifest = [
+            "# QwenTTS ONNX manifest",
+            "# packed %s UTC" % datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "# kind %s" % kind,
+            "",
+        ]
         for i, (path, arc, size) in enumerate(rows, 1):
             zf.write(path, arc)
             written += size
@@ -128,17 +176,43 @@ def write_zip(out_path: str, rows: list[tuple[str, str, int]]) -> None:
     print("wrote %s (%.2f GB)" % (out_path, os.path.getsize(out_path) / 1e9), flush=True)
 
 
+def selected_archives(only: str | None) -> tuple[tuple[str, str, str], ...]:
+    if not only:
+        return ARCHIVES
+    name = ONLY_ALIASES.get(only, only)
+    picked = tuple(a for a in ARCHIVES if a[0] == name)
+    if not picked:
+        print("unknown --only %r (want %s)" % (only, ", ".join(ONLY_ALIASES)), file=sys.stderr)
+        sys.exit(2)
+    return picked
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--src", default=os.path.expanduser("~/Downloads/Qwen3-TTS-ONNX"),
                    help="folder holding Qwen3-1.7B-VoiceDesign and Qwen3-1.7B-Base")
-    p.add_argument("--out", default=os.path.expanduser("~/Downloads/QwenTTS.zip"))
+    p.add_argument("--out-dir", default=os.path.expanduser("~/Downloads"),
+                   help="directory to write the four zips into")
+    p.add_argument("--only", default=None,
+                   help="one zip: VoiceDesign, Base, VoiceDesign-int8, Base-int8")
+    p.add_argument("--dry-run", action="store_true",
+                   help="list files and sizes, do not write zips")
     args = p.parse_args()
     if not os.path.isdir(args.src):
         print("src not found:", args.src, file=sys.stderr)
         sys.exit(2)
-    rows = collect(args.src)
-    write_zip(args.out, rows)
+    os.makedirs(args.out_dir, exist_ok=True)
+    archives = selected_archives(args.only)
+    grand = 0
+    for zip_name, checkpoint, kind in archives:
+        rows = collect_one(args.src, checkpoint, kind)
+        total = sum(s for _, _, s in rows)
+        grand += total
+        print("%s  %d files  %.2f GB" % (zip_name, len(rows), total / 1e9), flush=True)
+        if args.dry_run:
+            continue
+        write_zip(os.path.join(args.out_dir, zip_name), kind, rows)
+    print("total %.2f GB across %d zip(s)" % (grand / 1e9, len(archives)), flush=True)
 
 
 if __name__ == "__main__":

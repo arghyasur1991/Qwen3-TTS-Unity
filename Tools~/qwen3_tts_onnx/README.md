@@ -65,7 +65,7 @@ tokenizer/                    HF tokenizer files
 | `_onnx_util.py` | Collapses an export to one `.onnx` + one `.onnx.data`. |
 | `bake_projected_tables.py` | Pre-applies the code-predictor projection to the codec embedding tables (~138 MB). Called by `export_embeddings.py`, and runnable against an existing export without reloading the checkpoint. |
 | `quantize_int8.py` | int8 weights for the talker and code predictor, holding the output projection and outermost decoder layers in fp32. Optional; the engine uses them only when asked. |
-| `pack_gdrive.py` | Copies only the runtime files (unified talker, no prefill/decode duplicates) into `QwenTTS/` and writes a store-only zip for a Drive upload. |
+| `pack_gdrive.py` | Copies only the runtime files (unified talker, no prefill/decode duplicates) into four store-only zips: fp32 VoiceDesign, fp32 Base, and an int8 overlay per checkpoint. `--only VoiceDesign` (etc.) writes one. |
 | `benchmark_precision.py` | Times fp32 against fp16 and int8 for one graph on your ONNX Runtime build, and reports how far the logits moved. |
 
 ## Reference implementations (debugging, not export)

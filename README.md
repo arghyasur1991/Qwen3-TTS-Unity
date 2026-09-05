@@ -96,8 +96,18 @@ copied into the build. Prefer a folder you install or download into.
 
 ### Pre-exported ONNX models
 
-As an alternative to running the exporter, download the zip of the files this
-package actually opens, extract, and place the `QwenTTS` folder so the layout is
+As an alternative to running the exporter, download the zips of the files this
+package actually opens. They are split so a Drive upload is not a 20 GB
+blob: each fp32 checkpoint is its own zip, and int8 is an overlay.
+
+| Zip | Contents | Size |
+|---|---|---|
+| `QwenTTS-VoiceDesign.zip` | fp32 VoiceDesign | ~8.3 GB |
+| `QwenTTS-Base.zip` | fp32 Base (includes speaker + tokenizer encoders) | ~8.7 GB |
+| `QwenTTS-VoiceDesign-int8.zip` | int8 graphs for VoiceDesign | ~2.5 GB |
+| `QwenTTS-Base-int8.zip` | int8 graphs for Base | ~2.5 GB |
+
+Extract every zip you want into the **same parent** so the layout is
 
 ```
 QwenTTS/
@@ -105,11 +115,16 @@ QwenTTS/
   Qwen3-1.7B-Base/            the same, plus speaker_encoder and tokenizer_encoder
 ```
 
-Point `QwenTtsSettings.ModelRoot` at that `QwenTTS` folder, or drop it at
-`Assets/StreamingAssets/QwenTTS/` (the default). The zip is the unified-talker
-set plus optional int8 graphs; it does not include the superseded
-`talker_prefill` / `talker_decode` pair. Rebuild it from an export folder with
-`python3 Tools~/qwen3_tts_onnx/pack_gdrive.py`.
+The int8 zips drop `talker_int8` / `code_predictor_int8` into that same
+checkpoint folder — they are not a complete install. Skip them unless you
+will set `QwenTtsSettings.Precision = QwenPrecision.Int8`.
+
+You only need the checkpoint you will load. Design-then-clone wants both
+fp32 zips. Point `QwenTtsSettings.ModelRoot` at that `QwenTTS` folder, or
+drop it at `Assets/StreamingAssets/QwenTTS/` (the default). These archives
+are the unified-talker set; they do not include the superseded
+`talker_prefill` / `talker_decode` pair. Rebuild them from an export folder
+with `python3 Tools~/qwen3_tts_onnx/pack_gdrive.py`.
 
 **Window → Qwen3 TTS → Model Status** shows the same information without
 writing code.

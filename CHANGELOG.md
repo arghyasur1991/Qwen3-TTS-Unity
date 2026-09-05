@@ -3,8 +3,10 @@
 ## Unreleased
 
 - `Tools~/qwen3_tts_onnx/pack_gdrive.py` packs the runtime ONNX set (unified
-  talker, embeddings, tokenizer, optional int8) into a `QwenTTS/` zip for a
-  Drive upload, dropping superseded prefill/decode graphs.
+  talker, embeddings, tokenizer) into four store-only zips: fp32 VoiceDesign,
+  fp32 Base, and an int8 overlay per checkpoint. A single 20 GB archive is
+  too large for a reliable Drive upload. Superseded prefill/decode graphs
+  stay out.
 
 ## 0.1.0
 
