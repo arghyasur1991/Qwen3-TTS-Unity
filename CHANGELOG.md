@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `Tools~/qwen3_tts_onnx/pack_gdrive.py` packs the runtime ONNX set (unified
+  talker, embeddings, tokenizer, optional int8) into a `QwenTTS/` zip for a
+  Drive upload, dropping superseded prefill/decode graphs.
+
 ## 0.1.0
 
 First release. The ONNX inference path began as a branch of Spark-TTS-Unity and
